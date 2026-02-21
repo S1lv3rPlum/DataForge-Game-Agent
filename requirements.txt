@@ -1,1 +1,6 @@
 
+torch
+numpy
+pygame
+gymnasium
+matplotlib
