@@ -1,10 +1,13 @@
 # Setup Instructions — DataForge-Game-Agent
 
 Setup guide for Matt's PC. Follow these steps in order before running anything.
+--
 ** if this is NOT the first time you're running it, do this: 
-cd DataForge-Game-Agent
-venv\Scripts\activate
 
+cd DataForge-Game-Agent
+
+venv\Scripts\activate
+--
 
 ---
 
