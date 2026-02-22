@@ -1,6 +1,10 @@
 # random_agent.py
-# A completely random agent — picks cells with no strategy whatsoever
-# Now with live performance dashboard!
+# Random Agent — Version 2.0
+# Now with:
+#   - Difficulty selection screen
+#   - Flagging actions in random move set
+#   - Updated dashboard metrics (flags, board cleared %)
+#   - Shared dashboard support for comparison with learning agent
 #
 # Run this with:  python games/minesweeper/random_agent.py
 
@@ -13,78 +17,66 @@ import pygame
 from games.minesweeper.minesweeper_env import MinesweeperEnv
 from agent.dashboard import Dashboard
 
-# ── Settings ────────────────────────────────────────────────────────────────
-NUM_EPISODES = 50       # how many games to play
-STEP_DELAY   = 0.15     # seconds between moves (slow enough to watch)
-PRINT_BOARD  = False    # set True if you want terminal board output too
-
-
-def print_board(obs):
-    """Print a readable version of the board to the terminal."""
-    symbols = {-1: "■", -2: "F", -3: "💣"}
-    print("\n  " + " ".join(str(c) for c in range(obs.shape[1])))
-    for r, row in enumerate(obs):
-        line = f"{r} "
-        for val in row:
-            if val in symbols:
-                line += symbols[val] + " "
-            else:
-                line += str(val) + " "
-        print(line)
-    print()
+# ── Settings ──────────────────────────────────────────────────────────────────
+NUM_EPISODES = 100      # how many games to play
+STEP_DELAY   = 0.05    # seconds between moves
 
 
 def run():
     env  = MinesweeperEnv(render_mode="human")
-    dash = Dashboard(agent_name="Random Agent", color="#4C72B0")
+    obs, _ = env.reset()   # triggers difficulty selection screen
+
+    dash = Dashboard(agent_name="Random Agent")
+
+    print(f"\nRandom Agent starting on {env.difficulty}...")
+    print(f"Board: {env.rows}x{env.cols} | Mines: {env.num_mines}")
+    print(f"Action space: {env.action_space.n} "
+          f"({env.rows * env.cols} reveal + "
+          f"{env.rows * env.cols} flag)\n")
 
     for episode in range(1, NUM_EPISODES + 1):
-        obs, _       = env.reset()
-        total_reward = 0
-        done         = False
-        step         = 0
+        if episode > 1:
+            obs, _ = env.reset()
 
-        print(f"\nEpisode {episode}/{NUM_EPISODES}")
+        total_reward    = 0
+        done            = False
+        step            = 0
 
         while not done:
-            # Handle pygame window close
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     env.close()
                     dash.close()
-                    print("\nWindow closed. Exiting.")
                     return
 
-            # Random action — no strategy whatsoever
             action = env.action_space.sample()
             obs, reward, done, truncated, info = env.step(action)
 
             total_reward += reward
             step         += 1
-
-            if PRINT_BOARD:
-                print(f"Step {step} — Action: row={action // env.cols}, "
-                      f"col={action % env.cols} — Reward: {reward:.1f}")
-                print_board(obs)
-
             time.sleep(STEP_DELAY)
 
-        # Episode complete — update dashboard
         result = "WIN 🎉" if env.won else "LOSS 💥"
-        print(f"Episode {episode} — {result} | "
-              f"Steps: {step} | Reward: {total_reward:.1f}")
+        print(f"Episode {episode:4d} | {result} | "
+              f"Steps: {step:3d} | "
+              f"Reward: {total_reward:6.1f} | "
+              f"Flags: {env.correct_flags}/{env.num_mines} | "
+              f"Cleared: {env.safe_revealed}/{env.safe_total}")
 
         dash.update(
-            episode = episode,
-            reward  = total_reward,
-            won     = env.won,
-            steps   = step
+            episode       = episode,
+            reward        = total_reward,
+            won           = env.won,
+            steps         = step,
+            correct_flags = env.correct_flags,
+            pct_cleared   = env.safe_revealed / env.safe_total
+                            if env.safe_total > 0 else 0.0
         )
 
-        time.sleep(1)
+        time.sleep(0.8)
 
     env.close()
-    dash.close()   # keeps dashboard open after run finishes
+    dash.close()
 
 
 if __name__ == "__main__":
