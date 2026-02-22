@@ -64,19 +64,21 @@ class Launcher:
         self.hovered_btn     = None
 
     def run(self):
-        """Main launcher loop."""
-        self.selected_game  = self._game_selection_screen()
-        if not self.selected_game:
-            pygame.quit()
-            return
-
-        self.selected_agent = self._agent_selection_screen()
-        if not self.selected_agent:
-            pygame.quit()
-            return
-
-        self._launch(self.selected_game, self.selected_agent)
+    """Main launcher loop."""
+    self.selected_game  = self._game_selection_screen()
+    if not self.selected_game:
         pygame.quit()
+        return "quit"
+
+    self.selected_agent = self._agent_selection_screen()
+    if not self.selected_agent:
+        # Back was pressed — restart launcher
+        pygame.quit()
+        return None
+
+    self._launch(self.selected_game, self.selected_agent)
+    pygame.quit()
+    return None
 
     # ── Game Selection Screen ─────────────────────────────────────────────────
 
@@ -360,5 +362,8 @@ class Launcher:
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    launcher = Launcher()
-    launcher.run()
+    while True:
+        launcher = Launcher()
+        result   = launcher.run()
+        if result == "quit":
+            break
