@@ -7,9 +7,9 @@
 
 import sys
 import os
-import subprocess
 import pygame
 import time
+from multiprocessing import freeze_support
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
@@ -179,20 +179,6 @@ class Launcher:
         self.screen.blit(desc_lbl, desc_lbl.get_rect(
             center=(rect.centerx, rect.y + 178)))
 
-        # Difficulty pills
-        pill_y = rect.y + 200
-        diffs  = cfg.get("difficulties", [])
-        total_pill_w = len(diffs) * 58 + (len(diffs) - 1) * 6
-        pill_x = rect.centerx - total_pill_w // 2
-
-        for diff in diffs:
-            pill = pygame.Rect(pill_x, pill_y, 54, 20)
-            pygame.draw.rect(self.screen, (40, 40, 70),
-                             pill, border_radius=10)
-            pygame.draw.rect(self.screen, accent, pill, 1, border_radius=10)
-            dlbl = self.font_sm.render(diff[:3], True, accent)
-            self.screen.blit(dlbl, dlbl.get_rect(center=pill.center))
-            pill_x += 60
 
     # ── Agent Selection Screen ────────────────────────────────────────────────
 
@@ -304,35 +290,41 @@ class Launcher:
         """Launch the selected game and agent(s)."""
         pygame.quit()
 
-        scripts = {
-            "Random Agent":       "agent/random_agent.py",
-            "DQN Learning Agent": "agent/learning_agent.py",
-        }
-
         if agent == "Both":
             print(f"\n🚀 Launching Both Agents for {game}...")
-            print("Opening two windows — Random Agent and DQN Learning Agent")
-            print("Both will share the live dashboard automatically.\n")
+            print("Both agents will share the live dashboard.\n")
 
-            # Launch random agent in a new terminal window
-            subprocess.Popen(
-                ["cmd", "/c", "start", "cmd", "/k",
-                 f"cd /d {os.getcwd()} && "
-                 f"venv\\Scripts\\activate && "
-                 f"python agent/random_agent.py"],
-                shell=False
-            )
+            # Use multiprocessing to run both agents truly simultaneously
+            from multiprocessing import Process
 
-            time.sleep(2)   # small delay so windows don't overlap perfectly
+            def run_random():
+                from agent.random_agent import run
+                run(game_name=game)
 
-            # Launch learning agent in this process
-            os.system(f"python agent/learning_agent.py")
+            def run_learning():
+                from agent.learning_agent import run
+                run(game_name=game)
 
-        else:
-            script = scripts.get(agent)
-            if script:
-                print(f"\n🚀 Launching {agent} for {game}...")
-                os.system(f"python {script}")
+            # Start random agent in separate process
+            p1 = Process(target=run_random)
+            p1.start()
+
+            # Small delay so windows don't spawn on top of each other
+            time.sleep(2)
+
+            # Run learning agent in this process
+            run_learning()
+
+            # Wait for random agent to finish
+            p1.join()
+
+        elif agent == "Random Agent":
+            from agent.random_agent import run
+            run(game_name=game)
+
+        elif agent == "DQN Learning Agent":
+            from agent.learning_agent import run
+            run(game_name=game)
 
     # ── Shared UI Elements ────────────────────────────────────────────────────
 
@@ -362,6 +354,7 @@ class Launcher:
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    freeze_support()   # needed for PyInstaller packaging later
     while True:
         launcher = Launcher()
         result   = launcher.run()
