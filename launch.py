@@ -297,6 +297,7 @@ class Launcher:
     def _launch(self, game, agent):
         """Launch the selected game and agent(s)."""
         pygame.quit()
+        pygame.display.quit()
 
         if agent == "Both":
             print(f"\n🚀 Launching Both Agents for {game}...")
@@ -305,7 +306,7 @@ class Launcher:
             from multiprocessing import Process
             p1 = Process(target=run_random_process, args=(game,))
             p1.start()
-            time.sleep(2)
+            time.sleep(3)
             run_learning_process(game)
             p1.join()
 
@@ -313,16 +314,7 @@ class Launcher:
             run_random_process(game)
 
         elif agent == "DQN Learning Agent":
-            run_learning_process(game) 
-
-        elif agent == "Random Agent":
-            from agent.random_agent import run
-            run(game_name=game)
-
-        elif agent == "DQN Learning Agent":
-            from agent.learning_agent import run
-            run(game_name=game)
-
+            run_learning_process(game)
     # ── Shared UI Elements ────────────────────────────────────────────────────
 
     def _draw_header(self, subtitle):
