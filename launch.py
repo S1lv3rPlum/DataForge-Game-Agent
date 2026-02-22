@@ -42,7 +42,15 @@ AGENT_DESCRIPTIONS = {
     "Both":               "Run both simultaneously — shared dashboard",
 }
 
+def run_random_process(game_name="Minesweeper"):
+    from agent.random_agent import run
+    run(game_name=game_name)
 
+
+def run_learning_process(game_name="Minesweeper"):
+    from agent.learning_agent import run
+    run(game_name=game_name)
+    
 class Launcher:
     def __init__(self):
         pygame.init()
@@ -294,29 +302,18 @@ class Launcher:
             print(f"\n🚀 Launching Both Agents for {game}...")
             print("Both agents will share the live dashboard.\n")
 
-            # Use multiprocessing to run both agents truly simultaneously
             from multiprocessing import Process
-
-            def run_random():
-                from agent.random_agent import run
-                run(game_name=game)
-
-            def run_learning():
-                from agent.learning_agent import run
-                run(game_name=game)
-
-            # Start random agent in separate process
-            p1 = Process(target=run_random)
+            p1 = Process(target=run_random_process, args=(game,))
             p1.start()
-
-            # Small delay so windows don't spawn on top of each other
             time.sleep(2)
-
-            # Run learning agent in this process
-            run_learning()
-
-            # Wait for random agent to finish
+            run_learning_process(game)
             p1.join()
+
+        elif agent == "Random Agent":
+            run_random_process(game)
+
+        elif agent == "DQN Learning Agent":
+            run_learning_process(game) 
 
         elif agent == "Random Agent":
             from agent.random_agent import run
