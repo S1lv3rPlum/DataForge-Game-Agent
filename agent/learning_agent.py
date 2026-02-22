@@ -229,7 +229,7 @@ class DQNAgent:
 
 # ── Main Training Loop ────────────────────────────────────────────────────────
 
-def run():
+def run(game_name="Minesweeper"):
     env    = MinesweeperEnv(render_mode="human")
     obs, _ = env.reset()   # triggers difficulty selection screen
 
