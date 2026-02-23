@@ -481,7 +481,7 @@ class Launcher:
         self.screen.blit(hint_lbl, hint_lbl.get_rect(
             center=(W // 2, H - 20)))
 
-── Entry Point ───────────────────────────────────────────────────────────────
+# ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     from multiprocessing import freeze_support
