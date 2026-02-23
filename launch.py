@@ -1,15 +1,14 @@
 # launch.py
 # DataForge Game Agent — Main Launcher
-# Version 1.0
+# Version 2.0
+# Now with turn-based dual agent support and watch toggle
 #
-# The single entry point for everything.
 # Run with:  python launch.py
 
 import sys
 import os
-import pygame
 import time
-from multiprocessing import freeze_support
+import pygame
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
@@ -27,20 +26,23 @@ ACCENT_TEAL  = (78,  205, 196)
 ACCENT_RED   = (255, 107, 107)
 ACCENT_GOLD  = (255, 230, 109)
 
-# Agent options
+# ── Agent Options ─────────────────────────────────────────────────────────────
 AGENTS = ["Random Agent", "DQN Learning Agent", "Both"]
 
 AGENT_COLORS = {
-    "Random Agent":      (255, 107, 107),
-    "DQN Learning Agent":(78,  205, 196),
-    "Both":              (255, 230, 109),
+    "Random Agent":       (255, 107, 107),
+    "DQN Learning Agent": (78,  205, 196),
+    "Both":               (255, 230, 109),
 }
 
 AGENT_DESCRIPTIONS = {
     "Random Agent":       "Clicks randomly — no learning",
     "DQN Learning Agent": "Learns from experience using deep RL",
-    "Both":               "Run both simultaneously — shared dashboard",
+    "Both":               "Both agents take turns — watch either one live",
 }
+
+
+# ── Top Level Functions (must be outside class for multiprocessing) ───────────
 
 def run_random_process(game_name="Minesweeper"):
     from agent.random_agent import run
@@ -50,7 +52,176 @@ def run_random_process(game_name="Minesweeper"):
 def run_learning_process(game_name="Minesweeper"):
     from agent.learning_agent import run
     run(game_name=game_name)
-    
+
+
+def run_both_agents(game_name="Minesweeper"):
+    """
+    Turn-based dual agent runner.
+    Both agents alternate complete episodes.
+    User can toggle which agent they watch live.
+    The background agent runs without rendering for speed.
+    """
+    import threading
+    import torch
+    from games.registry import GAME_REGISTRY
+    from agent.dashboard import Dashboard
+    from agent.learning_agent import DQNAgent, EPISODES, STEP_DELAY, TARGET_UPDATE, SAVE_EVERY
+
+    cfg      = GAME_REGISTRY[game_name]
+    EnvClass = cfg["env_class"]
+
+    # ── Shared state ──────────────────────────────────────────────────────────
+    # Which agent is currently being watched
+    watch_state      = {"agent": "Random Agent"}   # mutable dict for threading
+    running          = {"active": True}
+
+    # ── Create both dashboards ────────────────────────────────────────────────
+    random_dash   = Dashboard(agent_name="Random Agent")
+    learning_dash = Dashboard(agent_name="DQN Learning Agent")
+
+    # ── Create environments ───────────────────────────────────────────────────
+    # Watched env renders visually, background env runs headless
+    def make_env(render):
+        return EnvClass(render_mode="human" if render else None)
+
+    # ── Learning agent setup ──────────────────────────────────────────────────
+    # We need a temporary env to get state/action sizes
+    temp_env     = EnvClass(render_mode=None, difficulty="Beginner")
+    temp_obs, _  = temp_env.reset()
+    state_size   = temp_env.rows * temp_env.cols
+    action_size  = temp_env.action_space.n
+    temp_env.close()
+
+    dqn_agent = DQNAgent(state_size, action_size, difficulty="Beginner")
+    dqn_agent.load()
+
+    print(f"\n🎮 Both Agents starting — {game_name}")
+    print(f"Toggle which agent you watch using the dashboard button.\n")
+
+    episode_count = {"random": 0, "learning": 0}
+
+    for turn in range(EPISODES):
+        if not running["active"]:
+            break
+
+        # ── Random Agent Episode ──────────────────────────────────────────────
+        episode_count["random"] += 1
+        watching_random = watch_state["agent"] == "Random Agent"
+
+        r_env    = make_env(watching_random)
+        r_obs, _ = r_env.reset()
+
+        r_done        = False
+        r_reward      = 0
+        r_steps       = 0
+
+        while not r_done:
+            if watching_random:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running["active"] = False
+                        r_env.close()
+                        break
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_TAB:
+                            watch_state["agent"] = "DQN Learning Agent"
+
+            action        = r_env.action_space.sample()
+            r_obs, reward, r_done, _, _ = r_env.step(action)
+            r_reward     += reward
+            r_steps      += 1
+
+            if watching_random:
+                time.sleep(STEP_DELAY)
+
+        r_env.close()
+
+        random_dash.update(
+            episode       = episode_count["random"],
+            reward        = r_reward,
+            won           = r_env.won,
+            steps         = r_steps,
+            correct_flags = r_env.correct_flags,
+            pct_cleared   = r_env.safe_revealed / r_env.safe_total
+                            if r_env.safe_total > 0 else 0.0
+        )
+
+        print(f"[Random]   Ep {episode_count['random']:4d} | "
+              f"{'WIN 🎉' if r_env.won else 'LOSS 💥'} | "
+              f"Steps: {r_steps:3d} | Reward: {r_reward:6.1f}")
+
+        if not running["active"]:
+            break
+
+        # ── Learning Agent Episode ────────────────────────────────────────────
+        episode_count["learning"] += 1
+        watching_learning = watch_state["agent"] == "DQN Learning Agent"
+
+        l_env    = make_env(watching_learning)
+        l_obs, _ = l_env.reset()
+
+        l_state  = l_obs
+        l_done   = False
+        l_reward = 0
+        l_steps  = 0
+
+        while not l_done:
+            if watching_learning:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running["active"] = False
+                        l_env.close()
+                        break
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_TAB:
+                            watch_state["agent"] = "Random Agent"
+
+            action = dqn_agent.select_action(l_state, l_env)
+            l_next, reward, l_done, _, _ = l_env.step(action)
+
+            dqn_agent.memory.push(l_state, action, reward, l_next, l_done)
+            dqn_agent.learn()
+
+            l_state   = l_next
+            l_reward += reward
+            l_steps  += 1
+
+            if watching_learning:
+                time.sleep(STEP_DELAY)
+
+        l_env.close()
+
+        dqn_agent.update_epsilon()
+
+        if episode_count["learning"] % TARGET_UPDATE == 0:
+            dqn_agent.update_target_network()
+
+        if episode_count["learning"] % SAVE_EVERY == 0:
+            dqn_agent.save()
+
+        learning_dash.update(
+            episode       = episode_count["learning"],
+            reward        = l_reward,
+            won           = l_env.won,
+            steps         = l_steps,
+            correct_flags = l_env.correct_flags,
+            pct_cleared   = l_env.safe_revealed / l_env.safe_total
+                            if l_env.safe_total > 0 else 0.0
+        )
+
+        print(f"[Learning] Ep {episode_count['learning']:4d} | "
+              f"{'WIN 🎉' if l_env.won else 'LOSS 💥'} | "
+              f"Steps: {l_steps:3d} | Reward: {l_reward:6.1f} | "
+              f"ε: {dqn_agent.epsilon:.3f}")
+
+    dqn_agent.save()
+    random_dash.close()
+    learning_dash.close()
+    print("\nBoth agents finished!")
+
+
+# ── Launcher Class ────────────────────────────────────────────────────────────
+
 class Launcher:
     def __init__(self):
         pygame.init()
@@ -58,29 +229,25 @@ class Launcher:
         pygame.display.set_caption("DataForge Game Agent — Launcher")
         self.clock   = pygame.time.Clock()
 
-        # Fonts
         self.font_xl  = pygame.font.SysFont("segoeui", 32, bold=True)
         self.font_lg  = pygame.font.SysFont("segoeui", 22, bold=True)
         self.font_md  = pygame.font.SysFont("segoeui", 16)
         self.font_sm  = pygame.font.SysFont("segoeui", 13)
         self.font_ico = pygame.font.SysFont("segoeuiemoji", 28)
 
-        self.selected_game   = None
-        self.selected_agent  = None
-        self.hovered_card    = None
-        self.hovered_agent   = None
-        self.hovered_btn     = None
+        self.selected_game  = None
+        self.selected_agent = None
+        self.hovered_card   = None
+        self.hovered_agent  = None
 
     def run(self):
-        """Main launcher loop."""
-        self.selected_game  = self._game_selection_screen()
+        self.selected_game = self._game_selection_screen()
         if not self.selected_game:
             pygame.quit()
             return "quit"
 
         self.selected_agent = self._agent_selection_screen()
         if not self.selected_agent:
-            # Back was pressed — restart launcher
             pygame.quit()
             return None
 
@@ -88,10 +255,9 @@ class Launcher:
         pygame.quit()
         return None
 
-    # ── Game Selection Screen ─────────────────────────────────────────────────
+    # ── Game Selection ────────────────────────────────────────────────────────
 
     def _game_selection_screen(self):
-        """Show game cards and return selected game name."""
         games    = list(GAME_REGISTRY.items())
         cards    = self._build_game_cards(games)
         selected = None
@@ -118,14 +284,13 @@ class Launcher:
         return selected
 
     def _build_game_cards(self, games):
-        """Calculate card positions."""
-        cards     = []
-        card_w    = 200
-        card_h    = 240
-        cols      = min(len(games), 4)
-        total_w   = cols * card_w + (cols - 1) * 20
-        start_x   = (W - total_w) // 2
-        start_y   = 160
+        cards   = []
+        card_w  = 200
+        card_h  = 200
+        cols    = min(len(games), 4)
+        total_w = cols * card_w + (cols - 1) * 20
+        start_x = (W - total_w) // 2
+        start_y = 160
 
         for i, (name, _) in enumerate(games):
             x    = start_x + i * (card_w + 20)
@@ -147,51 +312,42 @@ class Launcher:
         pygame.display.flip()
 
     def _draw_game_card(self, rect, name, cfg, hovered):
-        """Draw a single game card with icon and info."""
         color  = tuple(min(255, c + 20) for c in cfg["card_color"]) \
                  if hovered else cfg["card_color"]
         accent = cfg["accent"]
 
-        # Card background
         pygame.draw.rect(self.screen, color, rect, border_radius=14)
         pygame.draw.rect(self.screen, accent, rect, 2, border_radius=14)
 
-        # Hover glow
         if hovered:
             glow = pygame.Surface((rect.w + 8, rect.h + 8), pygame.SRCALPHA)
             pygame.draw.rect(glow, (*accent, 40),
                              glow.get_rect(), border_radius=16)
             self.screen.blit(glow, (rect.x - 4, rect.y - 4))
 
-        # Icon area
         icon_rect = pygame.Rect(rect.x + 10, rect.y + 10,
-                                rect.w - 20, 130)
+                                rect.w - 20, 110)
         pygame.draw.rect(self.screen, (10, 10, 20),
                          icon_rect, border_radius=10)
 
-        # Draw icon characters
         icon_lines = cfg["icon_chars"]
         for i, line in enumerate(icon_lines):
             lbl = self.font_ico.render(line, True, TEXT_WHITE)
             self.screen.blit(lbl, lbl.get_rect(
                 center=(icon_rect.centerx,
-                        icon_rect.y + 18 + i * 26)))
+                        icon_rect.y + 16 + i * 22)))
 
-        # Game name
         name_lbl = self.font_lg.render(name, True, TEXT_WHITE)
         self.screen.blit(name_lbl, name_lbl.get_rect(
-            center=(rect.centerx, rect.y + 155)))
+            center=(rect.centerx, rect.y + 132)))
 
-        # Description
         desc_lbl = self.font_sm.render(cfg["description"], True, TEXT_GRAY)
         self.screen.blit(desc_lbl, desc_lbl.get_rect(
-            center=(rect.centerx, rect.y + 178)))
+            center=(rect.centerx, rect.y + 158)))
 
-
-    # ── Agent Selection Screen ────────────────────────────────────────────────
+    # ── Agent Selection ───────────────────────────────────────────────────────
 
     def _agent_selection_screen(self):
-        """Show agent options and return selected agent."""
         buttons  = self._build_agent_buttons()
         selected = None
 
@@ -209,7 +365,6 @@ class Launcher:
                     for name, rect in buttons:
                         if rect.collidepoint(event.pos):
                             selected = name
-                    # Back button
                     back = pygame.Rect(20, H - 50, 100, 34)
                     if back.collidepoint(event.pos):
                         return None
@@ -244,7 +399,6 @@ class Launcher:
         self._draw_header(f"Select Agent — {self.selected_game}")
         self._draw_footer("ESC or Back to return to game selection")
 
-        # Game info recap
         recap = self.font_md.render(
             f"Game: {self.selected_game}", True, TEXT_GRAY)
         self.screen.blit(recap, recap.get_rect(center=(W // 2, 175)))
@@ -253,7 +407,6 @@ class Launcher:
             hovered = self.hovered_agent == name
             color   = AGENT_COLORS[name]
             bg      = tuple(min(255, c // 3 + 20) for c in color)
-
             if hovered:
                 bg = tuple(min(255, c // 2 + 20) for c in color)
 
@@ -276,11 +429,9 @@ class Launcher:
             self.screen.blit(desc_lbl, desc_lbl.get_rect(
                 center=(rect.centerx, rect.centery + 8)))
 
-            # Color indicator dot
             pygame.draw.circle(self.screen, color,
-                                (rect.centerx, rect.centery + 34), 6)
+                               (rect.centerx, rect.centery + 34), 6)
 
-        # Back button
         back_rect = pygame.Rect(20, H - 50, 100, 34)
         pygame.draw.rect(self.screen, (40, 40, 60),
                          back_rect, border_radius=8)
@@ -295,55 +446,47 @@ class Launcher:
     # ── Launch ────────────────────────────────────────────────────────────────
 
     def _launch(self, game, agent):
-        """Launch the selected game and agent(s)."""
         pygame.quit()
         pygame.display.quit()
 
         if agent == "Both":
-            print(f"\n🚀 Launching Both Agents for {game}...")
-            print("Both agents will share the live dashboard.\n")
-
-            from multiprocessing import Process
-            p1 = Process(target=run_random_process, args=(game,))
-            p1.start()
-            time.sleep(3)
-            run_learning_process(game)
-            p1.join()
-
+            run_both_agents(game)
         elif agent == "Random Agent":
             run_random_process(game)
-
         elif agent == "DQN Learning Agent":
             run_learning_process(game)
-    # ── Shared UI Elements ────────────────────────────────────────────────────
+
+    # ── Shared UI ─────────────────────────────────────────────────────────────
 
     def _draw_header(self, subtitle):
-        """Draw the top header bar."""
         pygame.draw.rect(self.screen, HEADER_COLOR,
                          pygame.Rect(0, 0, W, 130))
-        pygame.draw.line(self.screen, ACCENT_TEAL, (0, 130), (W, 130), 2)
+        pygame.draw.line(self.screen, ACCENT_TEAL,
+                         (0, 130), (W, 130), 2)
 
-        # DataForge branding
-        brand = self.font_xl.render("⚡ DataForge Game Agent", True, ACCENT_TEAL)
+        brand = self.font_xl.render(
+            "⚡ DataForge Game Agent", True, ACCENT_TEAL)
         self.screen.blit(brand, brand.get_rect(center=(W // 2, 55)))
 
         sub = self.font_md.render(subtitle, True, TEXT_GRAY)
         self.screen.blit(sub, sub.get_rect(center=(W // 2, 95)))
 
     def _draw_footer(self, hint):
-        """Draw the bottom footer bar."""
         pygame.draw.rect(self.screen, HEADER_COLOR,
                          pygame.Rect(0, H - 40, W, 40))
-        pygame.draw.line(self.screen, (40, 40, 60), (0, H - 40), (W, H - 40), 1)
+        pygame.draw.line(self.screen, (40, 40, 60),
+                         (0, H - 40), (W, H - 40), 1)
 
         hint_lbl = self.font_sm.render(hint, True, TEXT_DIM)
-        self.screen.blit(hint_lbl, hint_lbl.get_rect(center=(W // 2, H - 20)))
+        self.screen.blit(hint_lbl, hint_lbl.get_rect(
+            center=(W // 2, H - 20)))
 
-
-# ── Entry Point ───────────────────────────────────────────────────────────────
+── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    freeze_support()   # needed for PyInstaller packaging later
+    from multiprocessing import freeze_support
+    freeze_support()
+
     while True:
         launcher = Launcher()
         result   = launcher.run()
