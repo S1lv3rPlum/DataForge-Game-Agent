@@ -179,7 +179,10 @@ class Dashboard:
         if self.fig is None:
             return
 
-        all_data = self._read_shared_data()
+        try:
+            all_data = self._read_shared_data()
+        except Exception:
+            return
 
         # ── Win Rate ──────────────────────────────────────────────────────────
         self.ax_winrate.cla()
