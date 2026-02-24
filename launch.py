@@ -57,79 +57,86 @@ def run_learning_process(game_name="Minesweeper"):
 def run_both_agents(game_name="Minesweeper"):
     """
     Turn-based dual agent runner.
-    Both agents alternate complete episodes.
-    User can toggle which agent they watch live.
-    The background agent runs without rendering for speed.
+    Agents alternate complete episodes.
+    Tab key or T key toggles which agent you watch.
+    Background agent runs headless for speed.
     """
-    import threading
-    import torch
-    from games.registry import GAME_REGISTRY
     from agent.dashboard import Dashboard
-    from agent.learning_agent import DQNAgent, EPISODES, STEP_DELAY, TARGET_UPDATE, SAVE_EVERY
+    from agent.learning_agent import DQNAgent, STEP_DELAY, TARGET_UPDATE, SAVE_EVERY
 
     cfg      = GAME_REGISTRY[game_name]
     EnvClass = cfg["env_class"]
 
     # ── Shared state ──────────────────────────────────────────────────────────
-    # Which agent is currently being watched
-    watch_state      = {"agent": "Random Agent"}   # mutable dict for threading
-    running          = {"active": True}
+    watch_state = {"agent": "Random Agent"}
+    running     = {"active": True}
 
-    # ── Create both dashboards ────────────────────────────────────────────────
-    random_dash   = Dashboard(agent_name="Random Agent")
-    learning_dash = Dashboard(agent_name="DQN Learning Agent")
+    # ── Dashboards ────────────────────────────────────────────────────────────
+    # Only Random Agent opens the window
+    # Learning Agent writes data silently
+    random_dash   = Dashboard(agent_name="Random Agent",
+                              show_window=True)
+    learning_dash = Dashboard(agent_name="DQN Learning Agent",
+                              show_window=False)
 
-    # ── Create environments ───────────────────────────────────────────────────
-    # Watched env renders visually, background env runs headless
-    def make_env(render):
-        return EnvClass(render_mode="human" if render else None)
-
-    # ── Learning agent setup ──────────────────────────────────────────────────
-    # We need a temporary env to get state/action sizes
-    temp_env     = EnvClass(render_mode=None, difficulty="Beginner")
+    # ── Get difficulty from user once ─────────────────────────────────────────
+    # Use a temporary rendered env just for the difficulty screen
+    temp_env     = EnvClass(render_mode="human")
     temp_obs, _  = temp_env.reset()
+    chosen_diff  = temp_env.difficulty
     state_size   = temp_env.rows * temp_env.cols
     action_size  = temp_env.action_space.n
     temp_env.close()
 
-    dqn_agent = DQNAgent(state_size, action_size, difficulty="Beginner")
+    # ── Learning agent setup ──────────────────────────────────────────────────
+    dqn_agent = DQNAgent(state_size, action_size, difficulty=chosen_diff)
     dqn_agent.load()
 
-    print(f"\n🎮 Both Agents starting — {game_name}")
-    print(f"Toggle which agent you watch using the dashboard button.\n")
+    print(f"\n🎮 Both Agents starting on {game_name} — {chosen_diff}")
+    print(f"Press TAB to switch which agent you watch.\n")
 
     episode_count = {"random": 0, "learning": 0}
+    TOTAL_EPISODES = 3000
 
-    for turn in range(EPISODES):
+    for turn in range(TOTAL_EPISODES):
         if not running["active"]:
             break
 
-        # ── Random Agent Episode ──────────────────────────────────────────────
-        episode_count["random"] += 1
         watching_random = watch_state["agent"] == "Random Agent"
 
-        r_env    = make_env(watching_random)
+        # ── Show watch indicator in terminal ──────────────────────────────────
+        if turn % 10 == 0:
+            print(f"  👁 Watching: {watch_state['agent']} "
+                  f"(press TAB to switch)")
+
+        # ── Random Agent Episode ──────────────────────────────────────────────
+        episode_count["random"] += 1
+
+        r_env = EnvClass(
+            render_mode="human" if watching_random else None,
+            difficulty=chosen_diff
+        )
         r_obs, _ = r_env.reset()
 
-        r_done        = False
-        r_reward      = 0
-        r_steps       = 0
+        r_done   = False
+        r_reward = 0
+        r_steps  = 0
 
-        while not r_done:
+        while not r_done and running["active"]:
             if watching_random:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running["active"] = False
-                        r_env.close()
                         break
                     if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_TAB:
+                        if event.key in (pygame.K_TAB, pygame.K_t):
                             watch_state["agent"] = "DQN Learning Agent"
+                            print("  👁 Switching to: DQN Learning Agent")
 
-            action        = r_env.action_space.sample()
+            action          = r_env.action_space.sample()
             r_obs, reward, r_done, _, _ = r_env.step(action)
-            r_reward     += reward
-            r_steps      += 1
+            r_reward       += reward
+            r_steps        += 1
 
             if watching_random:
                 time.sleep(STEP_DELAY)
@@ -157,7 +164,10 @@ def run_both_agents(game_name="Minesweeper"):
         episode_count["learning"] += 1
         watching_learning = watch_state["agent"] == "DQN Learning Agent"
 
-        l_env    = make_env(watching_learning)
+        l_env = EnvClass(
+            render_mode="human" if watching_learning else None,
+            difficulty=chosen_diff
+        )
         l_obs, _ = l_env.reset()
 
         l_state  = l_obs
@@ -165,16 +175,16 @@ def run_both_agents(game_name="Minesweeper"):
         l_reward = 0
         l_steps  = 0
 
-        while not l_done:
+        while not l_done and running["active"]:
             if watching_learning:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running["active"] = False
-                        l_env.close()
                         break
                     if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_TAB:
+                        if event.key in (pygame.K_TAB, pygame.K_t):
                             watch_state["agent"] = "Random Agent"
+                            print("  👁 Switching to: Random Agent")
 
             action = dqn_agent.select_action(l_state, l_env)
             l_next, reward, l_done, _, _ = l_env.step(action)
