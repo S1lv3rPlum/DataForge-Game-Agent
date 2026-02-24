@@ -1,25 +1,29 @@
 # dashboard.py
-# Live performance dashboard for DataForge Game Agent — Version 3.0
+# Live performance dashboard for DataForge Game Agent — Version 4.0
 # Now with:
-#   - Single window for both agents
-#   - show_window parameter to prevent duplicate windows
+#   - Runs in its own background thread (no more pygame conflicts)
+#   - Watch control buttons on the dashboard
+#   - Headless by default — user chooses when to watch
+#   - All four graphs show both agents
 #   - Resize crash protection
-#   - High contrast colors for light and dark mode
-#   - Clear legends on all graphs
 
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.widgets as widgets
 import numpy as np
 import json
 import os
+import threading
+import time
 from collections import deque
 
 # ── Settings ──────────────────────────────────────────────────────────────────
-MAX_HISTORY  = 300
-UPDATE_EVERY = 1
-SHARED_FILE  = "dashboard_data.json"
+MAX_HISTORY   = 300
+UPDATE_EVERY  = 1
+SHARED_FILE   = "dashboard_data.json"
+REFRESH_RATE  = 1.5    # seconds between dashboard redraws
 
 # ── Agent Color Palette ───────────────────────────────────────────────────────
 AGENT_STYLES = {
@@ -44,16 +48,21 @@ DEFAULT_STYLE = {
     "label":     "Agent",
 }
 
+# ── Shared watch state ────────────────────────────────────────────────────────
+# This is read by launch.py to know which agent to render
+watch_request = {"agent": None}   # None = headless, "Random Agent", "DQN Learning Agent"
+
 
 class Dashboard:
     """
-    Live matplotlib dashboard showing agent performance in real time.
+    Live matplotlib dashboard running in its own background thread.
+    Includes watch control buttons so user can select which agent
+    to observe without touching the terminal.
 
     Parameters:
         agent_name  : name of this agent
-        show_window : if False, writes data but does not open a window.
-                      Use False for the second agent in Both mode to
-                      prevent duplicate dashboard windows.
+        show_window : if False, only writes data — no window opened.
+                      Use False for second agent in Both mode.
     """
 
     def __init__(self, agent_name="Agent", show_window=True):
@@ -75,34 +84,37 @@ class Dashboard:
         self.current_streak  = 0
         self.best_streak     = 0
 
-        self.fig         = None
-        self.stats_text  = None
+        self.fig             = None
+        self.stats_text      = None
+        self.watch_label     = None
+        self._running        = True
 
         # Always initialize shared file
         self._init_shared_file()
 
-        # Only build the window if show_window is True
+        # Only build window and start thread if show_window
         if self.show_window:
             self._build_window()
+            self._start_thread()
 
     # ── Window Builder ────────────────────────────────────────────────────────
 
     def _build_window(self):
         plt.ion()
-        self.fig = plt.figure(figsize=(13, 9), facecolor="#1a1a2e")
+        self.fig = plt.figure(figsize=(13, 10), facecolor="#1a1a2e")
         self.fig.canvas.manager.set_window_title(
             "DataForge Game Agent — Live Dashboard")
 
-        # Disable resize to prevent crashes
         try:
             self.fig.canvas.manager.window.resizable(False, False)
         except Exception:
             pass
 
+        # Grid — 3 rows of graphs + 1 row for controls
         gs = gridspec.GridSpec(
-            3, 2, figure=self.fig,
+            4, 2, figure=self.fig,
             hspace=0.55, wspace=0.35,
-            top=0.93, bottom=0.08
+            top=0.93, bottom=0.14
         )
 
         self.ax_winrate = self.fig.add_subplot(gs[0, :])
@@ -137,13 +149,120 @@ class Dashboard:
                       linewidth=1.5)
         )
 
+        # ── Watch Control Buttons ─────────────────────────────────────────────
+        btn_y     = 0.04
+        btn_h     = 0.06
+        btn_w     = 0.18
+
+        # Watch label
+        self.watch_label_ax = self.fig.add_axes(
+            [0.01, btn_y, 0.18, btn_h])
+        self.watch_label_ax.axis("off")
+        self.watch_label = self.watch_label_ax.text(
+            0.5, 0.5, "👁 Watching: None (Headless)",
+            ha="center", va="center",
+            color="#FFE66D", fontsize=9,
+            fontweight="bold"
+        )
+
+        # Watch Random button
+        ax_btn_random = self.fig.add_axes(
+            [0.22, btn_y, btn_w, btn_h])
+        self.btn_random = widgets.Button(
+            ax_btn_random, "🎲 Watch Random",
+            color="#3a1a1a", hovercolor="#5a2a2a"
+        )
+        self.btn_random.label.set_color("#FF6B6B")
+        self.btn_random.label.set_fontsize(9)
+        self.btn_random.on_clicked(self._on_watch_random)
+
+        # Watch Learning button
+        ax_btn_learning = self.fig.add_axes(
+            [0.42, btn_y, btn_w, btn_h])
+        self.btn_learning = widgets.Button(
+            ax_btn_learning, "🧠 Watch Learning",
+            color="#1a3a3a", hovercolor="#2a5a5a"
+        )
+        self.btn_learning.label.set_color("#4ECDC4")
+        self.btn_learning.label.set_fontsize(9)
+        self.btn_learning.on_clicked(self._on_watch_learning)
+
+        # Watch None button
+        ax_btn_none = self.fig.add_axes(
+            [0.62, btn_y, btn_w, btn_h])
+        self.btn_none = widgets.Button(
+            ax_btn_none, "⏹ Headless (Fast)",
+            color="#2a2a2a", hovercolor="#3a3a3a"
+        )
+        self.btn_none.label.set_color("#aaaaaa")
+        self.btn_none.label.set_fontsize(9)
+        self.btn_none.on_clicked(self._on_watch_none)
+
+        # Return to menu button
+        ax_btn_menu = self.fig.add_axes(
+            [0.82, btn_y, btn_w, btn_h])
+        self.btn_menu = widgets.Button(
+            ax_btn_menu, "← Menu",
+            color="#1a1a3a", hovercolor="#2a2a5a"
+        )
+        self.btn_menu.label.set_color("#aaaacc")
+        self.btn_menu.label.set_fontsize(9)
+        self.btn_menu.on_clicked(self._on_menu)
+
         plt.show(block=False)
         plt.pause(0.1)
+
+    # ── Button Callbacks ──────────────────────────────────────────────────────
+
+    def _on_watch_random(self, event):
+        watch_request["agent"] = "Random Agent"
+        if self.watch_label:
+            self.watch_label.set_text("👁 Watching: 🎲 Random Agent")
+        print("  👁 Switching to: Random Agent")
+
+    def _on_watch_learning(self, event):
+        watch_request["agent"] = "DQN Learning Agent"
+        if self.watch_label:
+            self.watch_label.set_text("👁 Watching: 🧠 DQN Learning Agent")
+        print("  👁 Switching to: DQN Learning Agent")
+
+    def _on_watch_none(self, event):
+        watch_request["agent"] = None
+        if self.watch_label:
+            self.watch_label.set_text("👁 Watching: None (Headless)")
+        print("  👁 Switching to: Headless mode")
+
+    def _on_menu(self, event):
+        watch_request["agent"] = "MENU"
+        self._running = False
+        if self.watch_label:
+            self.watch_label.set_text("Returning to menu...")
+        print("  Returning to launcher...")
+
+    # ── Background Thread ─────────────────────────────────────────────────────
+
+    def _start_thread(self):
+        """Start dashboard refresh thread."""
+        self._thread = threading.Thread(
+            target=self._refresh_loop,
+            daemon=True
+        )
+        self._thread.start()
+
+    def _refresh_loop(self):
+        """Continuously refresh dashboard from shared data."""
+        while self._running:
+            try:
+                self._draw()
+            except Exception:
+                pass
+            time.sleep(REFRESH_RATE)
 
     # ── Public Method ─────────────────────────────────────────────────────────
 
     def update(self, episode, reward, won, steps,
                correct_flags=0, pct_cleared=0.0):
+        """Update this agent's data. Drawing handled by background thread."""
         self.episodes.append(episode)
         self.rewards.append(reward)
         self.steps_history.append(steps)
@@ -164,10 +283,8 @@ class Dashboard:
 
         self._write_shared_data()
 
-        if self.show_window and episode % UPDATE_EVERY == 0:
-            self._draw()
-
     def close(self):
+        self._running = False
         self._cleanup_shared_file()
         if self.show_window and self.fig is not None:
             plt.ioff()
@@ -179,9 +296,8 @@ class Dashboard:
         if self.fig is None:
             return
 
-        try:
-            all_data = self._read_shared_data()
-        except Exception:
+        all_data = self._read_shared_data()
+        if not all_data:
             return
 
         # ── Win Rate ──────────────────────────────────────────────────────────
@@ -191,7 +307,8 @@ class Dashboard:
                          "Episode", "Win Rate %")
         self.ax_winrate.set_ylim(0, 100)
         self.ax_winrate.axhline(
-            y=50, color="#444466", linestyle=":", linewidth=1, alpha=0.7)
+            y=50, color="#444466",
+            linestyle=":", linewidth=1, alpha=0.7)
 
         for agent_name, data in all_data.items():
             style    = AGENT_STYLES.get(agent_name, DEFAULT_STYLE)
@@ -243,20 +360,6 @@ class Dashboard:
                 alpha=0.9
             )
 
-        # High score annotation for this agent
-        if self.high_score != float("-inf"):
-            self.ax_reward.annotate(
-                f"High: {self.high_score:.1f}",
-                xy=(0.98, 0.95),
-                xycoords="axes fraction",
-                ha="right", va="top",
-                color="#FFE66D", fontsize=8,
-                bbox=dict(boxstyle="round,pad=0.3",
-                          facecolor="#1a1a2e",
-                          edgecolor="#FFE66D",
-                          alpha=0.8)
-            )
-
         self.ax_reward.legend(
             loc="upper left",
             facecolor="#1a1a2e",
@@ -265,7 +368,7 @@ class Dashboard:
             fontsize=8
         )
 
-       # ── Steps ─────────────────────────────────────────────────────────────
+        # ── Steps ─────────────────────────────────────────────────────────────
         self.ax_steps.cla()
         self._style_axis(self.ax_steps,
                          "Steps Per Episode",
@@ -276,7 +379,6 @@ class Dashboard:
             episodes = list(range(len(data["steps"])))
             if not episodes:
                 continue
-
             self.ax_steps.plot(
                 episodes, data["steps"],
                 color=style["color"],
@@ -285,8 +387,6 @@ class Dashboard:
                 label=style["label"],
                 alpha=0.9
             )
-
-            # Smoothed trend line per agent
             if len(data["steps"]) > 10:
                 smooth = np.convolve(
                     data["steps"],
@@ -297,7 +397,7 @@ class Dashboard:
                     color=style["color"],
                     linewidth=2.5,
                     linestyle="--",
-                    alpha=0.6
+                    alpha=0.5
                 )
 
         self.ax_steps.legend(
@@ -311,7 +411,7 @@ class Dashboard:
         # ── Flags ─────────────────────────────────────────────────────────────
         self.ax_flags.cla()
         self._style_axis(self.ax_flags,
-                         "Correct Flags",
+                         "Correct Flags Per Episode",
                          "Episode", "Flags")
 
         for agent_name, data in all_data.items():
@@ -336,8 +436,9 @@ class Dashboard:
             fontsize=8
         )
 
-        # ── Stats Panel ───────────────────────────────────────────────────────
-        self.stats_text.set_text(self._format_stats(all_data))
+        # ── Stats ─────────────────────────────────────────────────────────────
+        if self.stats_text:
+            self.stats_text.set_text(self._format_stats(all_data))
 
         try:
             self.fig.canvas.draw()
@@ -346,7 +447,7 @@ class Dashboard:
             pass
 
     def _format_stats(self, all_data=None):
-        lines = ["── Agent Performance ──\n"]
+        lines = ["-- Agent Performance --\n"]
 
         if all_data:
             for agent_name, data in all_data.items():
