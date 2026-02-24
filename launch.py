@@ -602,9 +602,9 @@ class Launcher:
 
     def _build_agent_buttons(self):
         buttons = []
-        btn_w   = 260
+        btn_w   = 200
         btn_h   = 110
-        spacing = 24
+        spacing = 16
         total_w = len(AGENTS) * btn_w + (len(AGENTS) - 1) * spacing
         start_x = (W - total_w) // 2
         y       = 260
