@@ -27,18 +27,20 @@ ACCENT_RED   = (255, 107, 107)
 ACCENT_GOLD  = (255, 230, 109)
 
 # ── Agent Options ─────────────────────────────────────────────────────────────
-AGENTS = ["Random Agent", "DQN Learning Agent", "Both"]
+AGENTS = ["Random Agent", "DQN Learning Agent", "Both", "Play Yourself"]
 
 AGENT_COLORS = {
     "Random Agent":       (255, 107, 107),
     "DQN Learning Agent": (78,  205, 196),
     "Both":               (255, 230, 109),
+    "Play Yourself":      (168, 255, 120),
 }
 
 AGENT_DESCRIPTIONS = {
     "Random Agent":       "Clicks randomly — no learning",
     "DQN Learning Agent": "Learns from experience using deep RL",
     "Both":               "Both agents take turns — watch either one live",
+    "Play Yourself":      "You vs AI — beat it before it beats you!",
 }
 
 
