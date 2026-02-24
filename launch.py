@@ -675,8 +675,10 @@ class Launcher:
             run_both_agents(game)
         elif agent == "Random Agent":
             run_random_process(game)
-        elif agent == "DQN Learning Agent":
+       elif agent == "DQN Learning Agent":
             run_learning_process(game)
+        elif agent == "Play Yourself":
+            run_human_mode(game)
 
     # ── Shared UI ─────────────────────────────────────────────────────────────
 
