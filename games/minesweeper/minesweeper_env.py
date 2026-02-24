@@ -119,7 +119,7 @@ class MinesweeperEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
-        # Show difficulty screen if not yet chosen
+    # Show difficulty screen only if not already set
         if self.difficulty is None:
             if self.render_mode == "human":
                 self._init_pygame_basic()
@@ -141,14 +141,14 @@ class MinesweeperEnv(gym.Env):
         )
         self.action_space = spaces.Discrete(n * 2)
 
-        # Board state
-        self.mine_grid   = self._place_mines()
-        self.count_grid  = self._compute_counts()
-        self.visible     = np.full((self.rows, self.cols), HIDDEN, dtype=np.int32)
-        self.flags       = np.zeros((self.rows, self.cols), dtype=bool)
-        self.done        = False
-        self.won         = False
-        self.steps       = 0
+    # Board state
+        self.mine_grid     = self._place_mines()
+        self.count_grid    = self._compute_counts()
+        self.visible       = np.full((self.rows, self.cols), HIDDEN, dtype=np.int32)
+        self.flags         = np.zeros((self.rows, self.cols), dtype=bool)
+        self.done          = False
+        self.won           = False
+        self.steps         = 0
         self.correct_flags = 0
         self.safe_revealed = 0
         self.safe_total    = self.rows * self.cols - self.num_mines
