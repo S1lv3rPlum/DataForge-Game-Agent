@@ -228,7 +228,222 @@ def run_both_agents(game_name="Minesweeper"):
 
 
 # ── Launcher Class ────────────────────────────────────────────────────────────
+def run_human_mode(game_name="Minesweeper"):
+    """
+    Human vs AI mode.
+    Human plays on a real board with mouse clicks.
+    Random and Learning agents run headless in background.
+    After each human game a comparison popup appears.
+    All three tracked on shared dashboard.
+    """
+    import threading
+    from agent.dashboard import Dashboard, watch_request
+    from agent.learning_agent import DQNAgent, TARGET_UPDATE, SAVE_EVERY
 
+    cfg      = GAME_REGISTRY[game_name]
+    EnvClass = cfg["env_class"]
+
+    # ── Dashboards ────────────────────────────────────────────────────────────
+    human_dash    = Dashboard(agent_name="Human",
+                              show_window=True,
+                              human_mode=True)
+    random_dash   = Dashboard(agent_name="Random Agent",
+                              show_window=False)
+    learning_dash = Dashboard(agent_name="DQN Learning Agent",
+                              show_window=False)
+
+    # ── Get difficulty once via human env ─────────────────────────────────────
+    human_env    = EnvClass(render_mode="human")
+    obs, _       = human_env.reset()
+    chosen_diff  = human_env.difficulty
+    state_size   = human_env.rows * human_env.cols
+    action_size  = human_env.action_space.n
+
+    # ── Learning agent setup ──────────────────────────────────────────────────
+    dqn_agent = DQNAgent(state_size, action_size, difficulty=chosen_diff)
+    dqn_agent.load()
+
+    print(f"\n👤 Human vs AI — {game_name} ({chosen_diff})")
+    print(f"Left click = reveal  |  Right click = flag\n")
+
+    # ── AI snapshot tracker ───────────────────────────────────────────────────
+    # Tracks AI performance since last human game
+    ai_snapshot = {
+        "Random Agent": {
+            "wins": 0, "episodes": 0, "avg_reward": 0.0,
+            "total_reward": 0.0
+        },
+        "DQN Learning Agent": {
+            "wins": 0, "episodes": 0, "avg_reward": 0.0,
+            "total_reward": 0.0
+        },
+    }
+    snapshot_lock = threading.Lock()
+
+    # ── Background AI thread ──────────────────────────────────────────────────
+    stop_flag      = {"done": False}
+    ai_episode     = {"random": 0, "learning": 0}
+
+    def ai_worker():
+        """Runs both AI agents headless in background."""
+        r_env = EnvClass(render_mode=None, difficulty=chosen_diff)
+        l_env = EnvClass(render_mode=None, difficulty=chosen_diff)
+
+        while not stop_flag["done"]:
+
+            # Random episode
+            r_obs, _ = r_env.reset()
+            r_done   = False
+            r_reward = 0
+            r_steps  = 0
+
+            while not r_done:
+                action          = r_env.action_space.sample()
+                r_obs, reward, r_done, _, _ = r_env.step(action)
+                r_reward       += reward
+                r_steps        += 1
+
+            ai_episode["random"] += 1
+
+            with snapshot_lock:
+                snap = ai_snapshot["Random Agent"]
+                snap["episodes"]     += 1
+                snap["total_reward"] += r_reward
+                snap["avg_reward"]    = snap["total_reward"] / snap["episodes"]
+                if r_env.won:
+                    snap["wins"] += 1
+
+            random_dash.update(
+                episode       = ai_episode["random"],
+                reward        = r_reward,
+                won           = r_env.won,
+                steps         = r_steps,
+                correct_flags = r_env.correct_flags,
+                pct_cleared   = r_env.safe_revealed / r_env.safe_total
+                                if r_env.safe_total > 0 else 0.0
+            )
+
+            # Learning episode
+            l_obs, _ = l_env.reset()
+            l_state  = l_obs
+            l_done   = False
+            l_reward = 0
+            l_steps  = 0
+
+            while not l_done:
+                action = dqn_agent.select_action(l_state, l_env)
+                l_next, reward, l_done, _, _ = l_env.step(action)
+                dqn_agent.memory.push(
+                    l_state, action, reward, l_next, l_done)
+                dqn_agent.learn()
+                l_state   = l_next
+                l_reward += reward
+                l_steps  += 1
+
+            dqn_agent.update_epsilon()
+            ai_episode["learning"] += 1
+
+            if ai_episode["learning"] % TARGET_UPDATE == 0:
+                dqn_agent.update_target_network()
+            if ai_episode["learning"] % SAVE_EVERY == 0:
+                dqn_agent.save()
+
+            with snapshot_lock:
+                snap = ai_snapshot["DQN Learning Agent"]
+                snap["episodes"]     += 1
+                snap["total_reward"] += l_reward
+                snap["avg_reward"]    = snap["total_reward"] / snap["episodes"]
+                if l_env.won:
+                    snap["wins"] += 1
+
+            learning_dash.update(
+                episode       = ai_episode["learning"],
+                reward        = l_reward,
+                won           = l_env.won,
+                steps         = l_steps,
+                correct_flags = l_env.correct_flags,
+                pct_cleared   = l_env.safe_revealed / l_env.safe_total
+                                if l_env.safe_total > 0 else 0.0
+            )
+
+        r_env.close()
+        l_env.close()
+        dqn_agent.save()
+        print("\nAI agents finished.")
+
+    # Start AI thread
+    ai_thread = threading.Thread(target=ai_worker, daemon=True)
+    ai_thread.start()
+
+    # ── Human game loop ───────────────────────────────────────────────────────
+    human_episode = 0
+    playing       = True
+
+    while playing:
+        if watch_request.get("agent") == "MENU":
+            break
+
+        # Reset snapshot for this round
+        with snapshot_lock:
+            for snap in ai_snapshot.values():
+                snap["wins"]         = 0
+                snap["episodes"]     = 0
+                snap["avg_reward"]   = 0.0
+                snap["total_reward"] = 0.0
+
+        # Reset human env for new game
+        human_env.difficulty = chosen_diff
+        human_env.done       = False
+        human_env.won        = False
+        obs, _               = human_env.reset()
+
+        # Play human episode
+        with snapshot_lock:
+            current_snap = {
+                k: dict(v) for k, v in ai_snapshot.items()
+            }
+
+        stats, action = human_env.play_human_episode(
+            ai_snapshot=current_snap
+        )
+
+        human_episode += 1
+        human_reward   = stats["reward"]
+
+        human_dash.update(
+            episode       = human_episode,
+            reward        = human_reward,
+            won           = stats["won"],
+            steps         = stats["steps"],
+            correct_flags = stats["correct_flags"],
+            pct_cleared   = stats["safe_revealed"] / stats["safe_total"]
+                            if stats["safe_total"] > 0 else 0.0
+        )
+
+        print(f"[Human]    Ep {human_episode:4d} | "
+              f"{'WIN 🎉' if stats['won'] else 'LOSS 💥'} | "
+              f"Steps: {stats['steps']:3d} | "
+              f"Reward: {human_reward:6.1f} | "
+              f"AI games since last: {current_snap['DQN Learning Agent']['episodes']}")
+
+        if action == "menu":
+            playing = False
+
+        # Refresh dashboard
+        try:
+            human_dash._draw()
+        except Exception:
+            pass
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+    stop_flag["done"] = True
+    human_env.close()
+    human_dash.close()
+    random_dash.close()
+    learning_dash.close()
+    watch_request["agent"] = None
+    print("\nHuman mode finished!")
+    
 class Launcher:
     def __init__(self):
         pygame.init()
