@@ -1,11 +1,12 @@
 # dashboard.py
-# Live performance dashboard for DataForge Game Agent — Version 4.0
+# Live performance dashboard for DataForge Game Agent — Version 5.0
 # Now with:
-#   - Runs in its own background thread (no more pygame conflicts)
-#   - Watch control buttons on the dashboard
-#   - Headless by default — user chooses when to watch
-#   - All four graphs show both agents
-#   - Resize crash protection
+#   - Dashboard runs on MAIN thread (matplotlib requirement on Windows)
+#   - Agents run in background thread
+#   - Watch control buttons on dashboard
+#   - Headless by default for speed
+#   - All four charts show all agents including human player
+#   - Human player tracked as fourth agent in gold
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -15,15 +16,13 @@ import matplotlib.widgets as widgets
 import numpy as np
 import json
 import os
-import threading
 import time
 from collections import deque
 
 # ── Settings ──────────────────────────────────────────────────────────────────
-MAX_HISTORY   = 300
-UPDATE_EVERY  = 1
-SHARED_FILE   = "dashboard_data.json"
-REFRESH_RATE  = 1.5    # seconds between dashboard redraws
+MAX_HISTORY  = 300
+SHARED_FILE  = "dashboard_data.json"
+REFRESH_RATE = 1.5
 
 # ── Agent Color Palette ───────────────────────────────────────────────────────
 AGENT_STYLES = {
@@ -39,35 +38,42 @@ AGENT_STYLES = {
         "linestyle": "-",
         "label":     "DQN Learning Agent",
     },
+    "Human": {
+        "color":     "#FFE66D",
+        "marker":    "*",
+        "linestyle": "-",
+        "label":     "Human Player",
+    },
 }
 
 DEFAULT_STYLE = {
-    "color":     "#FFE66D",
+    "color":     "#aaaaaa",
     "marker":    "^",
     "linestyle": "-",
     "label":     "Agent",
 }
 
-# ── Shared watch state ────────────────────────────────────────────────────────
-# This is read by launch.py to know which agent to render
-watch_request = {"agent": None}   # None = headless, "Random Agent", "DQN Learning Agent"
+# ── Shared watch state (read by launch.py) ────────────────────────────────────
+watch_request = {"agent": None}  # None=headless, agent name, or "MENU"
 
 
 class Dashboard:
     """
-    Live matplotlib dashboard running in its own background thread.
-    Includes watch control buttons so user can select which agent
-    to observe without touching the terminal.
+    Live matplotlib dashboard — must be run on the main thread.
+    Agents write data to shared JSON file.
+    Dashboard reads and redraws on its own timer.
 
     Parameters:
         agent_name  : name of this agent
-        show_window : if False, only writes data — no window opened.
-                      Use False for second agent in Both mode.
+        show_window : if False, only writes data, no window opened
+        human_mode  : if True, shows human-specific controls
     """
 
-    def __init__(self, agent_name="Agent", show_window=True):
+    def __init__(self, agent_name="Agent",
+                 show_window=True, human_mode=False):
         self.agent_name  = agent_name
         self.show_window = show_window
+        self.human_mode  = human_mode
         self.style       = AGENT_STYLES.get(agent_name, DEFAULT_STYLE)
 
         # Local history
@@ -78,24 +84,20 @@ class Dashboard:
         self.flags_history   = deque(maxlen=MAX_HISTORY)
         self.cleared_history = deque(maxlen=MAX_HISTORY)
 
-        self.wins            = 0
-        self.losses          = 0
-        self.high_score      = float("-inf")
-        self.current_streak  = 0
-        self.best_streak     = 0
+        self.wins           = 0
+        self.losses         = 0
+        self.high_score     = float("-inf")
+        self.current_streak = 0
+        self.best_streak    = 0
 
-        self.fig             = None
-        self.stats_text      = None
-        self.watch_label     = None
-        self._running        = True
+        self.fig         = None
+        self.stats_text  = None
+        self.watch_label = None
 
-        # Always initialize shared file
         self._init_shared_file()
 
-        # Only build window and start thread if show_window
         if self.show_window:
             self._build_window()
-            self._start_thread()
 
     # ── Window Builder ────────────────────────────────────────────────────────
 
@@ -110,9 +112,8 @@ class Dashboard:
         except Exception:
             pass
 
-        # Grid — 3 rows of graphs + 1 row for controls
         gs = gridspec.GridSpec(
-            4, 2, figure=self.fig,
+            3, 2, figure=self.fig,
             hspace=0.55, wspace=0.35,
             top=0.93, bottom=0.14
         )
@@ -141,7 +142,7 @@ class Dashboard:
             0.5, 0.5, self._format_stats(),
             transform=self.ax_stats.transAxes,
             ha="center", va="center",
-            fontsize=10, color="white",
+            fontsize=9, color="white",
             fontfamily="monospace",
             bbox=dict(boxstyle="round,pad=0.6",
                       facecolor="#0f3460",
@@ -149,60 +150,57 @@ class Dashboard:
                       linewidth=1.5)
         )
 
-        # ── Watch Control Buttons ─────────────────────────────────────────────
-        btn_y     = 0.04
-        btn_h     = 0.06
-        btn_w     = 0.18
+        # ── Control Buttons ───────────────────────────────────────────────────
+        btn_y = 0.04
+        btn_h = 0.06
+        btn_w = 0.16
 
-        # Watch label
-        self.watch_label_ax = self.fig.add_axes(
-            [0.01, btn_y, 0.18, btn_h])
-        self.watch_label_ax.axis("off")
-        self.watch_label = self.watch_label_ax.text(
-            0.5, 0.5, "👁 Watching: None (Headless)",
+        # Watch status label
+        ax_label = self.fig.add_axes([0.01, btn_y, 0.16, btn_h])
+        ax_label.axis("off")
+        self.watch_label = ax_label.text(
+            0.5, 0.5,
+            "👁 Headless" if not self.human_mode else "👤 Human Mode",
             ha="center", va="center",
             color="#FFE66D", fontsize=9,
             fontweight="bold"
         )
 
-        # Watch Random button
-        ax_btn_random = self.fig.add_axes(
-            [0.22, btn_y, btn_w, btn_h])
-        self.btn_random = widgets.Button(
-            ax_btn_random, "🎲 Watch Random",
-            color="#3a1a1a", hovercolor="#5a2a2a"
-        )
-        self.btn_random.label.set_color("#FF6B6B")
-        self.btn_random.label.set_fontsize(9)
-        self.btn_random.on_clicked(self._on_watch_random)
+        if not self.human_mode:
+            # Watch Random button
+            ax_r = self.fig.add_axes([0.19, btn_y, btn_w, btn_h])
+            self.btn_random = widgets.Button(
+                ax_r, "🎲 Watch Random",
+                color="#3a1a1a", hovercolor="#5a2a2a"
+            )
+            self.btn_random.label.set_color("#FF6B6B")
+            self.btn_random.label.set_fontsize(9)
+            self.btn_random.on_clicked(self._on_watch_random)
 
-        # Watch Learning button
-        ax_btn_learning = self.fig.add_axes(
-            [0.42, btn_y, btn_w, btn_h])
-        self.btn_learning = widgets.Button(
-            ax_btn_learning, "🧠 Watch Learning",
-            color="#1a3a3a", hovercolor="#2a5a5a"
-        )
-        self.btn_learning.label.set_color("#4ECDC4")
-        self.btn_learning.label.set_fontsize(9)
-        self.btn_learning.on_clicked(self._on_watch_learning)
+            # Watch Learning button
+            ax_l = self.fig.add_axes([0.37, btn_y, btn_w, btn_h])
+            self.btn_learning = widgets.Button(
+                ax_l, "🧠 Watch Learning",
+                color="#1a3a3a", hovercolor="#2a5a5a"
+            )
+            self.btn_learning.label.set_color("#4ECDC4")
+            self.btn_learning.label.set_fontsize(9)
+            self.btn_learning.on_clicked(self._on_watch_learning)
 
-        # Watch None button
-        ax_btn_none = self.fig.add_axes(
-            [0.62, btn_y, btn_w, btn_h])
-        self.btn_none = widgets.Button(
-            ax_btn_none, "⏹ Headless (Fast)",
-            color="#2a2a2a", hovercolor="#3a3a3a"
-        )
-        self.btn_none.label.set_color("#aaaaaa")
-        self.btn_none.label.set_fontsize(9)
-        self.btn_none.on_clicked(self._on_watch_none)
+            # Headless button
+            ax_n = self.fig.add_axes([0.55, btn_y, btn_w, btn_h])
+            self.btn_none = widgets.Button(
+                ax_n, "⚡ Headless",
+                color="#2a2a2a", hovercolor="#3a3a3a"
+            )
+            self.btn_none.label.set_color("#aaaaaa")
+            self.btn_none.label.set_fontsize(9)
+            self.btn_none.on_clicked(self._on_watch_none)
 
-        # Return to menu button
-        ax_btn_menu = self.fig.add_axes(
-            [0.82, btn_y, btn_w, btn_h])
+        # Menu button — always present
+        ax_m = self.fig.add_axes([0.83, btn_y, btn_w, btn_h])
         self.btn_menu = widgets.Button(
-            ax_btn_menu, "← Menu",
+            ax_m, "← Menu",
             color="#1a1a3a", hovercolor="#2a2a5a"
         )
         self.btn_menu.label.set_color("#aaaacc")
@@ -217,52 +215,54 @@ class Dashboard:
     def _on_watch_random(self, event):
         watch_request["agent"] = "Random Agent"
         if self.watch_label:
-            self.watch_label.set_text("👁 Watching: 🎲 Random Agent")
-        print("  👁 Switching to: Random Agent")
+            self.watch_label.set_text("👁 🎲 Random")
 
     def _on_watch_learning(self, event):
         watch_request["agent"] = "DQN Learning Agent"
         if self.watch_label:
-            self.watch_label.set_text("👁 Watching: 🧠 DQN Learning Agent")
-        print("  👁 Switching to: DQN Learning Agent")
+            self.watch_label.set_text("👁 🧠 Learning")
 
     def _on_watch_none(self, event):
         watch_request["agent"] = None
         if self.watch_label:
-            self.watch_label.set_text("👁 Watching: None (Headless)")
-        print("  👁 Switching to: Headless mode")
+            self.watch_label.set_text("👁 Headless")
 
     def _on_menu(self, event):
         watch_request["agent"] = "MENU"
-        self._running = False
         if self.watch_label:
-            self.watch_label.set_text("Returning to menu...")
-        print("  Returning to launcher...")
+            self.watch_label.set_text("Returning...")
 
-    # ── Background Thread ─────────────────────────────────────────────────────
+    # ── Main Thread Loop ──────────────────────────────────────────────────────
 
-    def _start_thread(self):
-        """Start dashboard refresh thread."""
-        self._thread = threading.Thread(
-            target=self._refresh_loop,
-            daemon=True
-        )
-        self._thread.start()
-
-    def _refresh_loop(self):
-        """Continuously refresh dashboard from shared data."""
-        while self._running:
+    def main_loop(self, stop_flag):
+        """
+        Blocks on main thread refreshing dashboard.
+        stop_flag is a dict with key 'done' set to True when agents finish.
+        """
+        while not stop_flag.get("done") and \
+              watch_request.get("agent") != "MENU":
             try:
                 self._draw()
             except Exception:
                 pass
-            time.sleep(REFRESH_RATE)
+            for _ in range(int(REFRESH_RATE / 0.05)):
+                if stop_flag.get("done") or \
+                   watch_request.get("agent") == "MENU":
+                    break
+                try:
+                    plt.pause(0.05)
+                except Exception:
+                    break
 
-    # ── Public Method ─────────────────────────────────────────────────────────
+        try:
+            self._draw()
+        except Exception:
+            pass
+
+    # ── Public Update ─────────────────────────────────────────────────────────
 
     def update(self, episode, reward, won, steps,
                correct_flags=0, pct_cleared=0.0):
-        """Update this agent's data. Drawing handled by background thread."""
         self.episodes.append(episode)
         self.rewards.append(reward)
         self.steps_history.append(steps)
@@ -272,7 +272,8 @@ class Dashboard:
         if won:
             self.wins += 1
             self.current_streak += 1
-            self.best_streak = max(self.best_streak, self.current_streak)
+            self.best_streak = max(self.best_streak,
+                                   self.current_streak)
         else:
             self.losses += 1
             self.current_streak = 0
@@ -284,11 +285,13 @@ class Dashboard:
         self._write_shared_data()
 
     def close(self):
-        self._running = False
         self._cleanup_shared_file()
         if self.show_window and self.fig is not None:
-            plt.ioff()
-            plt.show(block=True)
+            try:
+                plt.ioff()
+                plt.close(self.fig)
+            except Exception:
+                pass
 
     # ── Drawing ───────────────────────────────────────────────────────────────
 
@@ -300,7 +303,7 @@ class Dashboard:
         if not all_data:
             return
 
-        # ── Win Rate ──────────────────────────────────────────────────────────
+        # Win Rate
         self.ax_winrate.cla()
         self._style_axis(self.ax_winrate,
                          "Win Rate Over Time",
@@ -338,13 +341,14 @@ class Dashboard:
             fontsize=9
         )
 
-        # ── Reward ────────────────────────────────────────────────────────────
+        # Reward
         self.ax_reward.cla()
         self._style_axis(self.ax_reward,
                          "Reward Per Episode",
                          "Episode", "Reward")
         self.ax_reward.axhline(
-            y=0, color="#888888", linestyle="-", linewidth=0.8)
+            y=0, color="#888888",
+            linestyle="-", linewidth=0.8)
 
         for agent_name, data in all_data.items():
             style    = AGENT_STYLES.get(agent_name, DEFAULT_STYLE)
@@ -368,7 +372,7 @@ class Dashboard:
             fontsize=8
         )
 
-        # ── Steps ─────────────────────────────────────────────────────────────
+        # Steps
         self.ax_steps.cla()
         self._style_axis(self.ax_steps,
                          "Steps Per Episode",
@@ -408,7 +412,7 @@ class Dashboard:
             fontsize=8
         )
 
-        # ── Flags ─────────────────────────────────────────────────────────────
+        # Flags
         self.ax_flags.cla()
         self._style_axis(self.ax_flags,
                          "Correct Flags Per Episode",
@@ -436,7 +440,7 @@ class Dashboard:
             fontsize=8
         )
 
-        # ── Stats ─────────────────────────────────────────────────────────────
+        # Stats
         if self.stats_text:
             self.stats_text.set_text(self._format_stats(all_data))
 
@@ -453,16 +457,18 @@ class Dashboard:
             for agent_name, data in all_data.items():
                 style = AGENT_STYLES.get(agent_name, DEFAULT_STYLE)
                 total = data["wins"] + data["losses"]
-                wr    = (data["wins"] / total * 100) if total > 0 else 0.0
+                wr    = (data["wins"] / total * 100) \
+                        if total > 0 else 0.0
                 hs    = f"{data['high_score']:.1f}" \
-                        if data["high_score"] != float("-inf") else "--"
+                        if data["high_score"] != float("-inf") \
+                        else "--"
                 lines.append(
                     f"{style['label']}\n"
-                    f"  Episodes  : {total}\n"
-                    f"  Wins      : {data['wins']}\n"
-                    f"  Losses    : {data['losses']}\n"
-                    f"  Win Rate  : {wr:.1f}%\n"
-                    f"  High Score: {hs}\n"
+                    f"  Episodes   : {total}\n"
+                    f"  Wins       : {data['wins']}\n"
+                    f"  Losses     : {data['losses']}\n"
+                    f"  Win Rate   : {wr:.1f}%\n"
+                    f"  High Score : {hs}\n"
                     f"  Best Streak: {data['best_streak']}\n"
                 )
         else:
@@ -472,11 +478,11 @@ class Dashboard:
                     if self.high_score != float("-inf") else "--"
             lines.append(
                 f"{self.style['label']}\n"
-                f"  Episodes  : {total}\n"
-                f"  Wins      : {self.wins}\n"
-                f"  Losses    : {self.losses}\n"
-                f"  Win Rate  : {wr:.1f}%\n"
-                f"  High Score: {hs}\n"
+                f"  Episodes   : {total}\n"
+                f"  Wins       : {self.wins}\n"
+                f"  Losses     : {self.losses}\n"
+                f"  Win Rate   : {wr:.1f}%\n"
+                f"  High Score : {hs}\n"
                 f"  Best Streak: {self.best_streak}\n"
             )
 
