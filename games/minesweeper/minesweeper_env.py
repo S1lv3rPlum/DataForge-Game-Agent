@@ -377,6 +377,234 @@ class MinesweeperEnv(gym.Env):
             self.window.blit(lbl, lbl.get_rect(
                 center=(board_w // 2, status_y + STATUS_H // 2)))
 
+    # ── Human Play ────────────────────────────────────────────────────────────
+
+    def play_human_episode(self, ai_snapshot=None):
+        """
+        Run a full human-controlled episode.
+        Left click = reveal, Right click = flag.
+        Returns dict of episode stats.
+        After game ends shows comparison popup if ai_snapshot provided.
+        """
+        self.render()
+
+        while not self.done:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.close()
+                    sys.exit()
+
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    row, col = self._mouse_to_cell(event.pos)
+                    if row is None:
+                        continue
+
+                    n = self.rows * self.cols
+
+                    if event.button == 1:
+                        # Left click — reveal
+                        action = row * self.cols + col
+                        self.step(action)
+
+                    elif event.button == 3:
+                        # Right click — flag
+                        action = n + row * self.cols + col
+                        self.step(action)
+
+            self.render()
+
+        # Game over — show result briefly then popup
+        self.render()
+        pygame.time.wait(800)
+
+        stats = {
+            "won":           self.won,
+            "reward":        self._calculate_reward(),
+            "steps":         self.steps,
+            "correct_flags": self.correct_flags,
+            "safe_revealed": self.safe_revealed,
+            "safe_total":    self.safe_total,
+        }
+
+        if ai_snapshot:
+            action = self._show_comparison_popup(stats, ai_snapshot)
+            return stats, action
+
+        return stats, "play_again"
+
+    def _calculate_reward(self):
+        """Estimate reward for human game."""
+        r = self.safe_revealed * 1.0
+        r += self.correct_flags * 5.0
+        if self.won:
+            r += 20.0
+        else:
+            r -= 10.0
+        r -= self.steps * 0.1
+        return r
+
+    def _mouse_to_cell(self, pos):
+        """Convert mouse position to board row/col. Returns None if outside board."""
+        x, y   = pos
+        col    = x // (CELL_SIZE + MARGIN)
+        row    = y // (CELL_SIZE + MARGIN)
+        board_h = self.rows * (CELL_SIZE + MARGIN) + MARGIN
+
+        if y >= board_h:
+            return None, None
+        if 0 <= row < self.rows and 0 <= col < self.cols:
+            return row, col
+        return None, None
+
+    def _show_comparison_popup(self, human_stats, ai_snapshot):
+        """
+        Show post-game popup comparing human to AI agents.
+        Returns 'play_again' or 'menu'.
+        """
+        board_w  = self.cols * (CELL_SIZE + MARGIN) + MARGIN
+        board_h  = self.rows * (CELL_SIZE + MARGIN) + MARGIN + STATUS_H
+
+        popup_w  = min(board_w - 20, 420)
+        popup_h  = 340
+        popup_x  = (board_w - popup_w) // 2
+        popup_y  = (board_h - popup_h) // 2
+
+        popup_rect     = pygame.Rect(popup_x, popup_y, popup_w, popup_h)
+        btn_play_rect  = pygame.Rect(
+            popup_x + 20, popup_y + popup_h - 60,
+            (popup_w - 60) // 2, 44
+        )
+        btn_menu_rect  = pygame.Rect(
+            popup_x + popup_w // 2 + 10, popup_y + popup_h - 60,
+            (popup_w - 60) // 2, 44
+        )
+
+        title_font = pygame.font.SysFont("segoeui", 18, bold=True)
+        body_font  = pygame.font.SysFont("segoeui", 14)
+        btn_font   = pygame.font.SysFont("segoeui", 15, bold=True)
+
+        # Build cheeky message
+        msg = self._cheeky_message(human_stats, ai_snapshot)
+
+        while True:
+            mouse = pygame.mouse.get_pos()
+
+            # Dim background
+            overlay = pygame.Surface((board_w, board_h), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 160))
+            self.window.blit(overlay, (0, 0))
+
+            # Popup background
+            pygame.draw.rect(self.window, (20, 20, 40),
+                             popup_rect, border_radius=14)
+            pygame.draw.rect(self.window, (78, 205, 196),
+                             popup_rect, 2, border_radius=14)
+
+            # Title
+            result   = "🎉 You Won!" if human_stats["won"] else "💥 Boom!"
+            color    = (30, 180, 30) if human_stats["won"] else (200, 30, 30)
+            title    = title_font.render(result, True, color)
+            self.window.blit(title, title.get_rect(
+                center=(popup_x + popup_w // 2, popup_y + 28)))
+
+            # Human stats
+            y = popup_y + 58
+            lines = [
+                ("Your Score", f"Reward: {human_stats['reward']:.1f}  |  "
+                               f"Steps: {human_stats['steps']}  |  "
+                               f"Flags: {human_stats['correct_flags']}/"
+                               f"{self.num_mines}",
+                 (255, 230, 109)),
+            ]
+
+            # AI comparison lines
+            for agent_name, snap in ai_snapshot.items():
+                if snap["episodes"] == 0:
+                    continue
+                wr  = snap["wins"] / snap["episodes"] * 100
+                avg = snap["avg_reward"]
+                if agent_name == "Random Agent":
+                    col = (255, 107, 107)
+                else:
+                    col = (78, 205, 196)
+                lines.append((
+                    agent_name,
+                    f"Avg Reward: {avg:.1f}  |  Win Rate: {wr:.1f}%  |  "
+                    f"Games: {snap['episodes']}",
+                    col
+                ))
+
+            for label, value, col in lines:
+                lbl = body_font.render(label, True, col)
+                val = body_font.render(value, True, (200, 200, 200))
+                self.window.blit(lbl, (popup_x + 16, y))
+                y  += 20
+                self.window.blit(val, (popup_x + 16, y))
+                y  += 26
+
+            # Cheeky message
+            y += 4
+            msg_lbl = body_font.render(msg, True, (255, 230, 109))
+            self.window.blit(msg_lbl, msg_lbl.get_rect(
+                center=(popup_x + popup_w // 2, y)))
+
+            # Buttons
+            play_hovered = btn_play_rect.collidepoint(mouse)
+            menu_hovered = btn_menu_rect.collidepoint(mouse)
+
+            pygame.draw.rect(
+                self.window,
+                (50, 120, 50) if play_hovered else (30, 80, 30),
+                btn_play_rect, border_radius=8)
+            pygame.draw.rect(
+                self.window,
+                (80, 80, 160) if menu_hovered else (40, 40, 100),
+                btn_menu_rect, border_radius=8)
+
+            play_lbl = btn_font.render("▶ Play Again", True, (255, 255, 255))
+            menu_lbl = btn_font.render("← Menu", True, (255, 255, 255))
+
+            self.window.blit(play_lbl, play_lbl.get_rect(
+                center=btn_play_rect.center))
+            self.window.blit(menu_lbl, menu_lbl.get_rect(
+                center=btn_menu_rect.center))
+
+            pygame.display.flip()
+            self.clock.tick(30)
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.close()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if btn_play_rect.collidepoint(event.pos):
+                        return "play_again"
+                    if btn_menu_rect.collidepoint(event.pos):
+                        return "menu"
+
+    def _cheeky_message(self, human_stats, ai_snapshot):
+        """Return a contextual cheeky message based on results."""
+        learning_snap = ai_snapshot.get("DQN Learning Agent",
+                                        {"wins": 0, "episodes": 0})
+        learning_wr   = (learning_snap["wins"] /
+                         learning_snap["episodes"] * 100) \
+                        if learning_snap["episodes"] > 0 else 0
+
+        human_reward  = human_stats["reward"]
+        learning_avg  = learning_snap.get("avg_reward", -999)
+
+        if not human_stats["won"] and human_stats["steps"] < 3:
+            return "Even the random agent does better sometimes... 😬"
+        if learning_wr > 50:
+            return "It's officially smarter than you at this. 🧠"
+        if learning_avg > human_reward:
+            return "The AI is catching up... 🤖"
+        if human_stats["won"]:
+            return "Nice one! The AI noticed. 👀"
+        if learning_wr > 20:
+            return "Enjoy it while it lasts! 🎓"
+        return "The AI is watching and learning... 👁"
+    
     # ── Difficulty Selection Screen ───────────────────────────────────────────
 
     def _difficulty_screen(self):
