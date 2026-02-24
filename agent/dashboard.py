@@ -221,16 +221,26 @@ class Dashboard:
         # ── Reward ────────────────────────────────────────────────────────────
         self.ax_reward.cla()
         self._style_axis(self.ax_reward,
-                         f"Reward — {self.style['label']}",
+                         "Reward Per Episode",
                          "Episode", "Reward")
-        ep_range = list(range(len(self.rewards)))
-        colors   = ["#4ECDC4" if r > 0 else "#FF6B6B"
-                    for r in self.rewards]
-        self.ax_reward.bar(ep_range, list(self.rewards),
-                           color=colors, width=0.8, alpha=0.85)
         self.ax_reward.axhline(
             y=0, color="#888888", linestyle="-", linewidth=0.8)
 
+        for agent_name, data in all_data.items():
+            style    = AGENT_STYLES.get(agent_name, DEFAULT_STYLE)
+            episodes = list(range(len(data["rewards"])))
+            if not episodes:
+                continue
+            self.ax_reward.plot(
+                episodes, data["rewards"],
+                color=style["color"],
+                linestyle=style["linestyle"],
+                linewidth=1.5,
+                label=style["label"],
+                alpha=0.9
+            )
+
+        # High score annotation for this agent
         if self.high_score != float("-inf"):
             self.ax_reward.annotate(
                 f"High: {self.high_score:.1f}",
@@ -244,34 +254,56 @@ class Dashboard:
                           alpha=0.8)
             )
 
-        # ── Steps ─────────────────────────────────────────────────────────────
+        self.ax_reward.legend(
+            loc="upper left",
+            facecolor="#1a1a2e",
+            edgecolor="#444466",
+            labelcolor="#ffffff",
+            fontsize=8
+        )
+
+       # ── Steps ─────────────────────────────────────────────────────────────
         self.ax_steps.cla()
         self._style_axis(self.ax_steps,
-                         f"Steps — {self.style['label']}",
+                         "Steps Per Episode",
                          "Episode", "Steps")
-        self.ax_steps.plot(
-            ep_range, list(self.steps_history),
-            color=self.style["color"],
-            linewidth=1.5, alpha=0.9
-        )
-        if len(self.steps_history) > 10:
-            smooth = np.convolve(
-                list(self.steps_history),
-                np.ones(10) / 10, mode="valid"
-            )
+
+        for agent_name, data in all_data.items():
+            style    = AGENT_STYLES.get(agent_name, DEFAULT_STYLE)
+            episodes = list(range(len(data["steps"])))
+            if not episodes:
+                continue
+
             self.ax_steps.plot(
-                list(range(len(smooth))), smooth,
-                color="#FFE66D", linewidth=2,
-                linestyle="--", label="10-ep avg",
+                episodes, data["steps"],
+                color=style["color"],
+                linestyle=style["linestyle"],
+                linewidth=1.5,
+                label=style["label"],
                 alpha=0.9
             )
-            self.ax_steps.legend(
-                loc="upper left",
-                facecolor="#1a1a2e",
-                edgecolor="#444466",
-                labelcolor="#ffffff",
-                fontsize=8
-            )
+
+            # Smoothed trend line per agent
+            if len(data["steps"]) > 10:
+                smooth = np.convolve(
+                    data["steps"],
+                    np.ones(10) / 10, mode="valid"
+                )
+                self.ax_steps.plot(
+                    list(range(len(smooth))), smooth,
+                    color=style["color"],
+                    linewidth=2.5,
+                    linestyle="--",
+                    alpha=0.6
+                )
+
+        self.ax_steps.legend(
+            loc="upper left",
+            facecolor="#1a1a2e",
+            edgecolor="#444466",
+            labelcolor="#ffffff",
+            fontsize=8
+        )
 
         # ── Flags ─────────────────────────────────────────────────────────────
         self.ax_flags.cla()
