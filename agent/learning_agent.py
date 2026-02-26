@@ -309,6 +309,91 @@ def run(game_name="Minesweeper"):
     print("\nTraining complete!")
 
 
+def run_headless(game_name="Minesweeper", dash=None,
+                 stop_flag=None, watch_request=None):
+    """
+    Runs learning agent — renders only when watch_request matches.
+    Used by launcher threading architecture.
+    """
+    import time
+    from games.registry import GAME_REGISTRY
+
+    cfg      = GAME_REGISTRY[game_name]
+    EnvClass = cfg["env_class"]
+
+    if stop_flag is None:
+        stop_flag = {"done": False}
+
+    temp_env    = EnvClass(render_mode=None, difficulty="Beginner")
+    temp_obs, _ = temp_env.reset()
+    state_size  = temp_env.rows * temp_env.cols
+    action_size = temp_env.action_space.n
+    diff        = temp_env.difficulty
+    temp_env.close()
+
+    agent   = DQNAgent(state_size, action_size, difficulty=diff)
+    agent.load()
+
+    episode = 0
+    TOTAL   = EPISODES
+
+    for _ in range(TOTAL):
+        if stop_flag.get("done"):
+            break
+        if watch_request and watch_request.get("agent") == "MENU":
+            break
+
+        watching = (watch_request and
+                    watch_request.get("agent") == "DQN Learning Agent")
+
+        env      = EnvClass(
+            render_mode="human" if watching else None,
+            difficulty=diff
+        )
+        obs, _   = env.reset()
+        state    = obs
+        done     = False
+        reward   = 0
+        steps    = 0
+
+        while not done:
+            action = agent.select_action(state, env)
+            next_s, r, done, _, _ = env.step(action)
+            agent.memory.push(state, action, r, next_s, done)
+            agent.learn()
+            state   = next_s
+            reward += r
+            steps  += 1
+            if watching:
+                time.sleep(STEP_DELAY)
+
+        env.close()
+        agent.update_epsilon()
+        episode += 1
+
+        if episode % TARGET_UPDATE == 0:
+            agent.update_target_network()
+        if episode % SAVE_EVERY == 0:
+            agent.save()
+
+        if dash:
+            dash.update(
+                episode       = episode,
+                reward        = reward,
+                won           = env.won,
+                steps         = steps,
+                correct_flags = env.correct_flags,
+                pct_cleared   = env.safe_revealed / env.safe_total
+                                if env.safe_total > 0 else 0.0
+            )
+
+        print(f"[Learning] Ep {episode:4d} | "
+              f"{'WIN 🎉' if env.won else 'LOSS 💥'} | "
+              f"Steps: {steps:3d} | Reward: {reward:6.1f} | "
+              f"ε: {agent.epsilon:.3f}")
+
+    agent.save()
+
 if __name__ == "__main__":
     run()
   
