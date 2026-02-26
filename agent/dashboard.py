@@ -142,8 +142,8 @@ class Dashboard:
     # ── Window Builder ────────────────────────────────────────────────────────
 
     def _build_window(self):
-        if not pygame.get_init():
-            pygame.init()
+        pygame.init()
+        pygame.display.init()
 
         # Position window top-left with some margin
         os.environ["SDL_VIDEO_WINDOW_POS"] = "40,40"
