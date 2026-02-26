@@ -783,6 +783,21 @@ if __name__ == "__main__":
     freeze_support()
 
     while True:
+        # Hard reset pygame between sessions
+        try:
+            pygame.quit()
+        except Exception:
+            pass
+        pygame.init()
+
+        # Clear stale dashboard data
+        try:
+            from agent.dashboard import SHARED_FILE
+            if os.path.exists(SHARED_FILE):
+                os.remove(SHARED_FILE)
+        except Exception:
+            pass
+
         launcher = Launcher()
         result   = launcher.run()
         if result == "quit":
