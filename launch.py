@@ -405,8 +405,63 @@ def run_human_mode(game_name="Minesweeper"):
         with snapshot_lock:
             current_snap = {k: dict(v) for k, v in ai_snapshot.items()}
 
-        stats, action = human_env.play_human_episode(
-            ai_snapshot=current_snap)
+        # Human game loop — handles play and dashboard refresh together
+        human_env.difficulty = chosen_diff
+        human_env.done       = False
+        human_env.won        = False
+        obs, _               = human_env.reset()
+
+        last_dash_draw = time.time()
+
+        while not human_env.done:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    stop_flag["done"] = True
+                    playing = False
+                    break
+
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    row, col = human_env._mouse_to_cell(event.pos)
+                    if row is not None:
+                        n = human_env.rows * human_env.cols
+                        if event.button == 1:
+                            human_env.step(row * human_env.cols + col)
+                        elif event.button == 3:
+                            human_env.step(
+                                n + row * human_env.cols + col)
+
+            human_env.render()
+
+            # Refresh dashboard every 2 seconds while human plays
+            now = time.time()
+            if now - last_dash_draw >= 2.0:
+                try:
+                    human_dash._draw()
+                except Exception:
+                    pass
+                last_dash_draw = now
+
+            if stop_flag.get("done"):
+                break
+
+        if stop_flag.get("done"):
+            break
+
+        pygame.time.wait(800)
+
+        with snapshot_lock:
+            current_snap = {k: dict(v) for k, v in ai_snapshot.items()}
+
+        stats = {
+            "won":           human_env.won,
+            "reward":        human_env._calculate_reward(),
+            "steps":         human_env.steps,
+            "correct_flags": human_env.correct_flags,
+            "safe_revealed": human_env.safe_revealed,
+            "safe_total":    human_env.safe_total,
+        }
+
+        action = human_env._show_comparison_popup(stats, current_snap)
 
         human_episode += 1
 
@@ -419,12 +474,6 @@ def run_human_mode(game_name="Minesweeper"):
             pct_cleared   = stats["safe_revealed"] / stats["safe_total"]
                             if stats["safe_total"] > 0 else 0.0
         )
-
-        # Refresh dashboard after human game
-        try:
-            human_dash._draw()
-        except Exception:
-            pass
 
         print(f"[Human]    Ep {human_episode:4d} | "
               f"{'WIN 🎉' if stats['won'] else 'LOSS 💥'} | "
