@@ -81,6 +81,67 @@ def run(game_name="Minesweeper"):
     env.close()
     dash.close()
 
+def run_headless(game_name="Minesweeper", dash=None,
+                 stop_flag=None, watch_request=None):
+    """
+    Runs random agent — renders only when watch_request matches.
+    Used by launcher threading architecture.
+    """
+    import time
+    from games.registry import GAME_REGISTRY
+
+    cfg      = GAME_REGISTRY[game_name]
+    EnvClass = cfg["env_class"]
+
+    if stop_flag is None:
+        stop_flag = {"done": False}
+
+    episode = 0
+    TOTAL   = 3000
+
+    for _ in range(TOTAL):
+        if stop_flag.get("done"):
+            break
+        if watch_request and watch_request.get("agent") == "MENU":
+            break
+
+        watching = (watch_request and
+                    watch_request.get("agent") == "Random Agent")
+
+        env      = EnvClass(
+            render_mode="human" if watching else None,
+            difficulty=None
+        )
+        obs, _   = env.reset()
+        done     = False
+        reward   = 0
+        steps    = 0
+
+        while not done:
+            action       = env.action_space.sample()
+            obs, r, done, _, _ = env.step(action)
+            reward      += r
+            steps       += 1
+            if watching:
+                time.sleep(0.05)
+
+        env.close()
+        episode += 1
+
+        if dash:
+            dash.update(
+                episode       = episode,
+                reward        = reward,
+                won           = env.won,
+                steps         = steps,
+                correct_flags = env.correct_flags,
+                pct_cleared   = env.safe_revealed / env.safe_total
+                                if env.safe_total > 0 else 0.0
+            )
+
+        print(f"[Random] Ep {episode:4d} | "
+              f"{'WIN 🎉' if env.won else 'LOSS 💥'} | "
+              f"Steps: {steps:3d} | Reward: {reward:6.1f}")
 
 if __name__ == "__main__":
     run()
