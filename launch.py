@@ -681,7 +681,16 @@ class Launcher:
     # ── Launch ────────────────────────────────────────────────────────────────
 
     def _launch(self, game, agent):
-        pygame.quit()
+        # Clear stale dashboard data from previous session
+        import json
+        from agent.dashboard import SHARED_FILE
+        try:
+            if os.path.exists(SHARED_FILE):
+                os.remove(SHARED_FILE)
+        except Exception:
+            pass
+
+        # Don't quit pygame here — game modes need it
         pygame.display.quit()
 
         if agent == "Both":
