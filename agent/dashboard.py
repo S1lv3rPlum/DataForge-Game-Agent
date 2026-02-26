@@ -438,17 +438,20 @@ class Dashboard:
             points = [to_screen(i, total, v)
                       for i, v in enumerate(vals)]
 
-            # Dashed or solid line
-            if style.get("dash"):
-                for i in range(0, len(points) - 1, 2):
+            # Always draw connected lines
+            if len(points) > 1:
+                pygame.draw.lines(
+                    self.screen, color, False, points, 2)
+
+            # Dashed overlay for random agent
+            if style.get("dash") and len(points) > 1:
+                dash_color = tuple(max(0, c - 40) for c in color)
+                for i in range(0, len(points) - 1, 4):
                     pygame.draw.line(
-                        self.screen, color,
-                        points[i], points[min(i + 1, len(points) - 1)],
-                        2)
-            else:
-                if len(points) > 1:
-                    pygame.draw.lines(
-                        self.screen, color, False, points, 2)
+                        self.screen, dash_color,
+                        points[i],
+                        points[min(i + 1, len(points) - 1)],
+                        1)
 
             # Smoothed trend for steps
             if key == "steps" and len(vals) > 10:
