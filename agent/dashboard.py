@@ -305,11 +305,13 @@ class Dashboard:
 
         # ── Chart layout ──────────────────────────────────────────────────────
         chart_y   = 60
-        chart_h   = (DASH_H - chart_y - 70) // 2
+        stats_h   = 70
+        btn_h     = 52
+        chart_h   = (DASH_H - chart_y - stats_h - btn_h - PAD * 4) // 2
         half_w    = (DASH_W - PAD * 3) // 2
         full_w    = DASH_W - PAD * 2
 
-        # Row 1
+        # Row 1 — win rate full width
         self._draw_line_chart(
             pygame.Rect(PAD, chart_y, full_w, chart_h),
             all_data, "win_rates",
@@ -318,15 +320,17 @@ class Dashboard:
             ref_line=50
         )
 
-        # Row 2 left
+        # Row 2 left — reward
         self._draw_line_chart(
-            pygame.Rect(PAD, chart_y + chart_h + PAD, half_w, chart_h),
+            pygame.Rect(PAD,
+                        chart_y + chart_h + PAD,
+                        half_w, chart_h),
             all_data, "rewards",
             "Reward Per Episode",
             ref_line=0
         )
 
-        # Row 2 right
+        # Row 2 right — steps
         self._draw_line_chart(
             pygame.Rect(PAD * 2 + half_w,
                         chart_y + chart_h + PAD,
@@ -335,11 +339,11 @@ class Dashboard:
             "Steps Per Episode"
         )
 
-        # Stats panel — bottom right of row 2
-        # (flags chart replaced by stats when 4 agents)
+        # Stats panel above buttons
         self._draw_stats_panel(
-            pygame.Rect(PAD, chart_y + chart_h * 2 + PAD * 2,
-                        full_w, 0),   # height unused
+            pygame.Rect(PAD,
+                        chart_y + chart_h * 2 + PAD * 2,
+                        full_w, stats_h),
             all_data
         )
 
@@ -494,8 +498,8 @@ class Dashboard:
             hs     = f"{data['high_score']:.1f}" \
                      if data["high_score"] != float("-inf") else "--"
 
-            panel  = pygame.Rect(x, DASH_H - 120,
-                                 panel_w - 8, 58)
+            panel  = pygame.Rect(x, rect.y,
+                            panel_w - 8, rect.h if rect.h > 0 else 58)
             pygame.draw.rect(self.screen, PANEL_BG,
                              panel, border_radius=8)
             pygame.draw.rect(self.screen, color,
