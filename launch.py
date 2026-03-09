@@ -512,16 +512,13 @@ class Launcher:
     def run(self):
         self.selected_game = self._game_selection_screen()
         if not self.selected_game:
-            pygame.quit()
             return "quit"
 
         self.selected_agent = self._agent_selection_screen()
         if not self.selected_agent:
-            pygame.quit()
             return None
 
         self._launch(self.selected_game, self.selected_agent)
-        pygame.quit()
         return None
 
     # ── Game Selection ────────────────────────────────────────────────────────
@@ -731,7 +728,6 @@ class Launcher:
 
     def _launch(self, game, agent):
         # Clear stale dashboard data from previous session
-        import json
         from agent.dashboard import SHARED_FILE
         try:
             if os.path.exists(SHARED_FILE):
@@ -739,8 +735,9 @@ class Launcher:
         except Exception:
             pass
 
-        # Don't quit pygame here — game modes need it
+        # Close launcher display but keep pygame alive
         pygame.display.quit()
+        pygame.display.init()
 
         if agent == "Both":
             run_both_agents(game)
