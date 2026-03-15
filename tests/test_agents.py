@@ -8,7 +8,25 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from games.minesweeper.minesweeper_env import MinesweeperEnv
-from agent.learning_agent import DQNAgent, ReplayMemory
+from agent.learning_agent import DQNAgent
+from collections import deque
+
+class ReplayMemory:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory   = deque(maxlen=capacity)
+
+    def push(self, *args):
+        self.memory.append(args)
+
+    def sample(self, batch_size):
+        import random
+        if len(self.memory) < batch_size:
+            raise ValueError("Not enough samples")
+        return random.sample(list(self.memory), batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
