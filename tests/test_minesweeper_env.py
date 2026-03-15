@@ -202,10 +202,12 @@ class TestFlag:
         n        = env.rows * env.cols
         action   = n + row * env.cols + col
 
-        env.step(action)           # flag it
-        _, reward, _, _, _ = env.step(action)   # unflag it
-        assert reward < 0
-        assert env.correct_flags == 0
+        _, r1, _, _, _ = env.step(action)   # flag it
+        assert env.correct_flags == 1       # confirmed flagged
+        assert r1 > 0                       # correct flag rewarded
+
+        _, r2, _, _, _ = env.step(action)   # unflag it
+        assert r2 < 0                       # penalized for removing
 
     def test_flag_revealed_cell_penalizes(self):
         """Can't flag an already revealed cell."""
