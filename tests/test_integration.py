@@ -117,25 +117,4 @@ class TestFullEpisode:
 
             assert done == True, f"{diff} episode never completed"
             env.close()
-```
 
----
-
-Now add pytest to `requirements.txt`. Open it and add this line:
-```
-pytest>=7.0
-```
-
-Then install it on Matt's PC once with:
-```
-pip install pytest
-```
-
-And run all tests with:
-```
-pytest tests/ -v
-```
-
-Or run a single file with:
-```
-pytest tests/test_minesweeper_env.py -v
