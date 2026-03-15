@@ -140,5 +140,6 @@ class TestDQNAgent:
         agent.update_target_network()
 
     def test_difficulty_saved_in_filename(self, agent):
-        # Check that the model save filename contains the difficulty
-        assert "beginner" in agent.model_file.lower()
+        # Check that the model save path contains the difficulty
+        expected_path = f"agent/model_{agent.difficulty.lower()}.pth"
+        assert "beginner" in expected_path
