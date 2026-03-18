@@ -108,6 +108,8 @@ class MinesweeperEnv(gym.Env):
         self.font     = None
         self.font_lg  = None
         self.font_sm  = None
+        self.font_sm    = None
+        self.show_rules = False
 
         # Placeholder spaces — updated after difficulty chosen
         self.observation_space = spaces.Box(
@@ -231,6 +233,8 @@ class MinesweeperEnv(gym.Env):
                         self.window.blit(label, label.get_rect(center=rect.center))
 
         self._draw_status()
+        if self.show_rules:
+            self._draw_rules_overlay()
         pygame.display.flip()
         self.clock.tick(self.metadata["render_fps"])
 
@@ -376,6 +380,15 @@ class MinesweeperEnv(gym.Env):
             lbl   = self.font_lg.render(msg, True, color)
             self.window.blit(lbl, lbl.get_rect(
                 center=(board_w // 2, status_y + STATUS_H // 2)))
+
+    # Rules button
+        btn = pygame.Rect(board_w - 80, status_y + 4, 74, 28)
+        pygame.draw.rect(self.window, (30, 30, 55),
+                         btn, border_radius=6)
+        pygame.draw.rect(self.window, (0, 123, 167),
+                         btn, 1, border_radius=6)
+        lbl = self.font_sm.render("📋 Rules", True, GRAY)
+        self.window.blit(lbl, lbl.get_rect(center=btn.center))
 
     # ── Human Play ────────────────────────────────────────────────────────────
 
@@ -604,7 +617,97 @@ class MinesweeperEnv(gym.Env):
         if learning_wr > 20:
             return "Enjoy it while it lasts! 🎓"
         return "The AI is watching and learning... 👁"
+
+  # rules overlay
     
+    def _draw_rules_overlay(self):
+        """Draw rules popup overlay."""
+        board_w = self.cols * (CELL_SIZE + MARGIN) + MARGIN
+        board_h = self.rows * (CELL_SIZE + MARGIN) + MARGIN + STATUS_H
+
+        overlay = pygame.Surface((board_w, board_h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.window.blit(overlay, (0, 0))
+
+        popup_w = min(board_w - 20, 380)
+        popup_h = 340
+        popup_x = (board_w - popup_w) // 2
+        popup_y = (board_h - popup_h) // 2
+        popup   = pygame.Rect(popup_x, popup_y, popup_w, popup_h)
+
+        pygame.draw.rect(self.window, (20, 20, 40),
+                         popup, border_radius=14)
+        pygame.draw.rect(self.window, (0, 123, 167),
+                         popup, 2, border_radius=14)
+
+        y = popup_y + 16
+        title = self.font_lg.render(
+            "📋 How Points Work", True, (78, 205, 196))
+        self.window.blit(title, title.get_rect(
+            center=(board_w // 2, y)))
+        y += 32
+
+        rules = [
+            ("Reveal safe cell",    "+1"),
+            ("Correct flag",        "+5"),
+            ("Wrong flag",          "-3"),
+            ("Remove correct flag", "-2"),
+            ("Hit a mine",         "-10"),
+            ("Win the game",       "+20"),
+            ("Each step",          "-0.1"),
+            ("Repeated action",    "-0.5"),
+        ]
+
+        for label, value in rules:
+            col = (30, 180, 30) if value.startswith("+") \
+                  else (200, 30, 30)
+            lbl = self.font_sm.render(label, True, (170, 170, 190))
+            val = self.font_sm.render(value, True, col)
+            self.window.blit(lbl, (popup_x + 16, y))
+            self.window.blit(val, (popup_x + popup_w -
+                                   val.get_width() - 16, y))
+            y += 22
+
+        y += 8
+        ctrl_title = self.font_sm.render(
+            "Controls", True, (78, 205, 196))
+        self.window.blit(ctrl_title, (popup_x + 16, y))
+        y += 20
+
+        controls = [
+            ("Left click",  "Reveal cell"),
+            ("Right click", "Flag / unflag"),
+        ]
+        for key, action in controls:
+            kl = self.font_sm.render(key,    True, (255, 200, 0))
+            al = self.font_sm.render(action, True, (170, 170, 190))
+            self.window.blit(kl, (popup_x + 16, y))
+            self.window.blit(al, (popup_x + 160,  y))
+            y += 18
+
+        # Got it button
+        btn = pygame.Rect(board_w // 2 - 50,
+                          popup_y + popup_h - 44,
+                          100, 32)
+        pygame.draw.rect(self.window, (0, 123, 167),
+                         btn, border_radius=8)
+        got_it = self.font_sm.render("Got it!", True, WHITE)
+        self.window.blit(got_it, got_it.get_rect(
+            center=btn.center))
+
+    def _rules_button_rect(self):
+        board_w = self.cols * (CELL_SIZE + MARGIN) + MARGIN
+        board_h = self.rows * (CELL_SIZE + MARGIN) + MARGIN
+        return pygame.Rect(board_w - 80, board_h + 4, 74, 28)
+
+    def _rules_got_it_rect(self):
+        board_w = self.cols * (CELL_SIZE + MARGIN) + MARGIN
+        board_h = self.rows * (CELL_SIZE + MARGIN) + MARGIN + STATUS_H
+        popup_h = 340
+        popup_y = (board_h - popup_h) // 2
+        return pygame.Rect(board_w // 2 - 50,
+                           popup_y + popup_h - 44,
+                           100, 32)
     # ── Difficulty Selection Screen ───────────────────────────────────────────
 
     def _difficulty_screen(self):
@@ -660,9 +763,21 @@ class MinesweeperEnv(gym.Env):
             self.clock.tick(30)
 
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
+            if event.type == pygame.QUIT:
+                self.close()
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN \
+                    and event.button == 1:
+                if self._rules_button_rect().collidepoint(
+                        event.pos):
+                    self.show_rules = not self.show_rules
+                if self.show_rules and \
+                        self._rules_got_it_rect().collidepoint(
+                        event.pos):
+                    self.show_rules = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.show_rules = False
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     for name, data in buttons.items():
                         if data["rect"].collidepoint(event.pos):
