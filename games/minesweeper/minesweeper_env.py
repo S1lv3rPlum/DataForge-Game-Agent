@@ -200,6 +200,18 @@ class MinesweeperEnv(gym.Env):
             if event.type == pygame.QUIT:
                 self.close()
                 sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN \
+                    and event.button == 1:
+                if self._rules_button_rect().collidepoint(
+                        event.pos):
+                    self.show_rules = not self.show_rules
+                if self.show_rules and \
+                        self._rules_got_it_rect().collidepoint(
+                        event.pos):
+                    self.show_rules = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.show_rules = False
 
         self.window.fill((20, 20, 35))
 
@@ -763,21 +775,9 @@ class MinesweeperEnv(gym.Env):
             self.clock.tick(30)
 
             for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.close()
-                sys.exit()
-            if event.type == pygame.MOUSEBUTTONDOWN \
-                    and event.button == 1:
-                if self._rules_button_rect().collidepoint(
-                        event.pos):
-                    self.show_rules = not self.show_rules
-                if self.show_rules and \
-                        self._rules_got_it_rect().collidepoint(
-                        event.pos):
-                    self.show_rules = False
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    self.show_rules = False
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     for name, data in buttons.items():
                         if data["rect"].collidepoint(event.pos):
