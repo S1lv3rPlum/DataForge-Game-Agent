@@ -377,7 +377,8 @@ class PinballEnv(gym.Env):
         self.wall_hit_count    = 0
         self.last_wall         = None
         self.show_rules        = False
-        self.total_reward      = 0.0
+       self.total_reward      = 0.0
+        self._step_count       = 0
 
         # Table elements
         self.bumpers          = []
@@ -420,6 +421,7 @@ class PinballEnv(gym.Env):
         self.wall_hit_count    = 0
         self.last_wall         = None
         self.total_reward      = 0.0
+        self._step_count       = 0
 
         self.balls = []
         self._build_table()
@@ -433,6 +435,15 @@ class PinballEnv(gym.Env):
     def step(self, action):
         if self.done:
             return self._get_obs(), 0.0, True, False, {}
+
+        # Safety — force end after 30000 steps
+        if not hasattr(self, '_step_count'):
+            self._step_count = 0
+        self._step_count += 1
+        if self._step_count >= 30000:
+            self._step_count = 0
+            self.done = True
+            return self._get_obs(), R_BALL_LAST_LIFE, True, False, {}
 
         cfg     = DIFFICULTIES[self.difficulty]
         reward  = 0.0
