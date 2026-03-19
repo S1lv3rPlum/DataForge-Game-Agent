@@ -421,6 +421,7 @@ class PinballEnv(gym.Env):
         self.last_wall         = None
         self.total_reward      = 0.0
 
+        self.balls = []
         self._build_table()
         self._launch_ball()
 
