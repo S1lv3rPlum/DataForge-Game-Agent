@@ -377,7 +377,7 @@ class PinballEnv(gym.Env):
         self.wall_hit_count    = 0
         self.last_wall         = None
         self.show_rules        = False
-       self.total_reward      = 0.0
+        self.total_reward      = 0.0
         self._step_count       = 0
 
         # Table elements
